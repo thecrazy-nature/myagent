@@ -61,8 +61,6 @@ result.peak_power = peak_power;
 result.peak_power_definition = ...
     "raw scalar-field |E|^2 in model units at the local focal peak";
 result.requested_power = requested_power;
-result.requested_to_peak_power_ratio = requested_power/max(peak_power, eps);
-result.focus_error_mm = norm(actual_peak_mm-target_mm);
 result.global_peak_mm = global_peak_mm;
 result.global_peak_power = global_peak_power;
 result.local_peak_radius_mm = cfg.evaluation.local_peak_radius_lambda*lambda_mm;

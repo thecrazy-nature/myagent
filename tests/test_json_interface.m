@@ -13,5 +13,7 @@ if string(payload.status) ~= "success"
 end
 assert(all(isfinite([payload.actual_peak_mm(:); payload.peak_power])), ...
     'JSON result contains a non-finite simulation value.');
+assert(~isfield(payload, 'focus_error_mm'), ...
+    'MATLAB interface must not emit Agent-side focus-error evaluation.');
 fprintf('TEST_JSON_INTERFACE_PASS %s\n', result_path);
 end

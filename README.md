@@ -5,6 +5,20 @@ carrier-frequency near-field focusing path from
 `F:\matlabcode\multiuser`. It does not require the source project on the
 MATLAB path and does not use mock data.
 
+## Python bridge
+
+The standard-library bridge hides MATLAB commands and task paths:
+
+```python
+from bridge import run_simulation
+
+result = run_simulation([0.0, 0.0, 100.0])
+```
+
+Each invocation creates an isolated `runs/<task_id>/` record. See
+[bridge/README.md](bridge/README.md) and
+[bridge/GATE3_REPORT.md](bridge/GATE3_REPORT.md).
+
 ## Scope and physical model
 
 - 28 GHz carrier (`lambda_c = 10.7142857143 mm`)
@@ -51,7 +65,7 @@ Input:
 Command-line invocation:
 
 ```powershell
-matlab -batch "addpath('F:/hermes-em-agent/agent_interface','-begin'); agent_run_simulation('F:/hermes-em-agent/tests/fixtures/config_valid.json','F:/hermes-em-agent/runs/result_task_001.json');"
+matlab -batch "addpath('F:/hermes-em-agent/agent_interface','-begin'); agent_run_simulation('F:/hermes-em-agent/runs/task_001/config.json','F:/hermes-em-agent/runs/task_001/result.json');"
 ```
 
 The interface writes a complete temporary UTF-8 JSON file and then atomically
@@ -73,7 +87,14 @@ Run every extracted-project test:
 matlab -batch "addpath('F:/hermes-em-agent/tests'); run_all_tests();"
 ```
 
+Run the three external cold-start `matlab -batch` cases on Windows:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "F:\hermes-em-agent\tests\run_batch_end_to_end.ps1" -MatlabExecutable "F:\matlab\bin\matlab.exe" -ProjectRoot "F:\hermes-em-agent"
+```
+
 See [AUDIT_REPORT.md](AUDIT_REPORT.md) for the source audit, numerical
 comparison, exclusions, and gate status. See
 [matlab_core/DEPENDENCIES.md](matlab_core/DEPENDENCIES.md) for the exact runtime
-closure.
+closure. The command-line-interface evidence is in
+[agent_interface/VALIDATION_REPORT.md](agent_interface/VALIDATION_REPORT.md).

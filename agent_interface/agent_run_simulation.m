@@ -24,10 +24,11 @@ try
             'Configuration JSON must decode to one object.');
     end
     if isfield(config, 'task_id')
-        task_id = string(config.task_id);
-        if ~isscalar(task_id) || ismissing(task_id)
+        if ~(ischar(config.task_id) || ...
+                (isstring(config.task_id) && isscalar(config.task_id)))
             error('hermes:InvalidTaskId', 'task_id must be a scalar string.');
         end
+        task_id = string(config.task_id);
     else
         error('hermes:MissingTaskId', 'Required field task_id is missing.');
     end
@@ -51,7 +52,6 @@ try
         'peak_power', core_result.peak_power, ...
         'peak_power_definition', core_result.peak_power_definition, ...
         'requested_power', core_result.requested_power, ...
-        'focus_error_mm', core_result.focus_error_mm, ...
         'runtime_sec', toc(started));
 catch exception
     error_type = string(exception.identifier);
