@@ -1,0 +1,10 @@
+name: em_focus
+version: 0.3.0
+description: Project-local tools for an LLM-driven MATLAB electromagnetic simulation workflow
+kind: standalone
+provides_tools:
+  - em_focus_ping
+  - create_focus_task
+  - run_focus_simulation
+  - evaluate_focus
+  - refine_focus

@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "suite_id": "workflow_12_v1",
+  "title": "Hermes electromagnetic simulation workflow benchmark",
+  "status": "designed_not_executed",
+  "execution_policy": {
+    "unit_and_workflow_tests": "Deterministic tests may mock MATLAB and do not produce scientific benchmark results.",
+    "end_to_end_tasks": "Every recorded scientific result must come from real Hermes tool calling and real MATLAB.",
+    "cold_start_note": "Each run_focus_simulation currently starts a new matlab -batch process."
+  },
+  "tasks": [
+    {
+      "id": "A01",
+      "type": "A",
+      "name": "One-shot axial focus at 80 mm",
+      "prompt": "请在 [0, 0, 80] mm 处进行一次近场聚焦仿真，只运行一次，并报告实际峰值位置、峰值功率和相对目标点的聚焦误差。",
+      "task_config": {
+        "desired_target_mm": [0, 0, 80],
+        "tolerance_mm": 5.0,
+        "max_refinements": 0
+      },
+      "expected_workflow": {
+        "required_sequence": ["create_focus_task", "run_focus_simulation", "evaluate_focus"],
+        "terminal_rule": "stop_after_first_evaluation_and_report",
+        "allow_refine": false
+      },
+      "requires_real_matlab": true
+    },
+    {
+      "id": "A02",
+      "type": "A",
+      "name": "One-shot off-axis focus at 100 mm",
+      "prompt": "请在 x=25 mm、y=0 mm、z=100 mm 处执行一次真实聚焦实验，不做修正，汇报 commanded target、actual peak、peak power 和 focus error。",
+      "task_config": {
+        "desired_target_mm": [25, 0, 100],
+        "tolerance_mm": 5.0,
+        "max_refinements": 0
+      },
+      "expected_workflow": {
+        "required_sequence": ["create_focus_task", "run_focus_simulation", "evaluate_focus"],
+        "terminal_rule": "stop_after_first_evaluation_and_report",
+        "allow_refine": false
+      },
+      "requires_real_matlab": true
+    },
+    {
+      "id": "A03",
+      "type": "A",
+      "name": "One-shot negative-x focus at 120 mm",
+      "prompt": "对目标 [-30, 0, 120] mm 只进行一次 MATLAB 近场聚焦仿真，评价后无论是否达到 5 mm 都停止并如实总结。",
+      "task_config": {
+        "desired_target_mm": [-30, 0, 120],
+        "tolerance_mm": 5.0,
+        "max_refinements": 0
+      },
+      "expected_workflow": {
+        "required_sequence": ["create_focus_task", "run_focus_simulation", "evaluate_focus"],
+        "terminal_rule": "stop_after_first_evaluation_and_report",
+        "allow_refine": false
+      },
+      "requires_real_matlab": true
+    },
+    {
+      "id": "B01",
+      "type": "B",
+      "name": "Axial six-millimetre constraint",
+      "prompt": "请在 [0, 0, 100] mm 处聚焦并判断真实峰值误差是否不超过 6 mm。本任务只要求一次实验，不进行补偿。",
+      "task_config": {
+        "desired_target_mm": [0, 0, 100],
+        "tolerance_mm": 6.0,
+        "max_refinements": 0
+      },
+      "expected_workflow": {
+        "required_sequence": ["create_focus_task", "run_focus_simulation", "evaluate_focus"],
+        "terminal_rule": "stop_after_constraint_decision",
+        "allow_refine": false
+      },
+      "requires_real_matlab": true
+    },
+    {
+      "id": "B02",
+      "type": "B",
+      "name": "Positive-x eight-millimetre constraint",
+      "prompt": "在 [30, 0, 110] mm 处运行一次真实聚焦实验，要求误差不超过 8 mm；请根据 MATLAB 结果明确报告约束是否满足。",
+      "task_config": {
+        "desired_target_mm": [30, 0, 110],
+        "tolerance_mm": 8.0,
+        "max_refinements": 0
+      },
+      "expected_workflow": {
+        "required_sequence": ["create_focus_task", "run_focus_simulation", "evaluate_focus"],
+        "terminal_rule": "stop_after_constraint_decision",
+        "allow_refine": false
+      },
+      "requires_real_matlab": true
+    },
+    {
+      "id": "B03",
+      "type": "B",
+      "name": "Negative-x eight-millimetre constraint",
+      "prompt": "请对 [-30, 0, 130] mm 完成一次近场聚焦实验，以 8 mm 为定位容差，调用评价工具后给出真实约束结论。",
+      "task_config": {
+        "desired_target_mm": [-30, 0, 130],
+        "tolerance_mm": 8.0,
+        "max_refinements": 0
+      },
+      "expected_workflow": {
+        "required_sequence": ["create_focus_task", "run_focus_simulation", "evaluate_focus"],
+        "terminal_rule": "stop_after_constraint_decision",
+        "allow_refine": false
+      },
+      "requires_real_matlab": true
+    },
+    {
+      "id": "C01",
+      "type": "C",
+      "name": "Verified Gate 4 replanning case",
+      "prompt": "请在 [0, 0, 100] mm 处完成近场聚焦，误差需不超过 5 mm。若首次失败，可最多修正两次；请根据每次真实评价自主决定下一步。",
+      "task_config": {
+        "desired_target_mm": [0, 0, 100],
+        "tolerance_mm": 5.0,
+        "max_refinements": 2
+      },
+      "expected_workflow": {
+        "required_sequence": ["create_focus_task", "run_focus_simulation", "evaluate_focus"],
+        "on_failed_evaluation": ["refine_focus", "run_focus_simulation", "evaluate_focus"],
+        "terminal_rule": "stop_on_success_or_budget_exhaustion",
+        "allow_refine": true
+      },
+      "requires_real_matlab": true,
+      "design_evidence": "Gate 4 observed first error 5.8 mm and success after one compensation."
+    },
+    {
+      "id": "C02",
+      "type": "C",
+      "name": "Strict positive-x replanning",
+      "prompt": "目标为 [20, 0, 100] mm，要求实际峰值误差不超过 3 mm。首次不满足时最多允许两次工作流级补偿，并在每次 MATLAB 实验后重新评价。",
+      "task_config": {
+        "desired_target_mm": [20, 0, 100],
+        "tolerance_mm": 3.0,
+        "max_refinements": 2
+      },
+      "expected_workflow": {
+        "required_sequence": ["create_focus_task", "run_focus_simulation", "evaluate_focus"],
+        "on_failed_evaluation": ["refine_focus", "run_focus_simulation", "evaluate_focus"],
+        "terminal_rule": "stop_on_success_or_budget_exhaustion",
+        "allow_refine": true
+      },
+      "requires_real_matlab": true
+    },
+    {
+      "id": "C03",
+      "type": "C",
+      "name": "Strict negative-x replanning",
+      "prompt": "请在 [-20, 0, 120] mm 处聚焦，定位误差需小于等于 3 mm。根据结构化评价决定是否使用补偿工具，最多修正两次。",
+      "task_config": {
+        "desired_target_mm": [-20, 0, 120],
+        "tolerance_mm": 3.0,
+        "max_refinements": 2
+      },
+      "expected_workflow": {
+        "required_sequence": ["create_focus_task", "run_focus_simulation", "evaluate_focus"],
+        "on_failed_evaluation": ["refine_focus", "run_focus_simulation", "evaluate_focus"],
+        "terminal_rule": "stop_on_success_or_budget_exhaustion",
+        "allow_refine": true
+      },
+      "requires_real_matlab": true
+    },
+    {
+      "id": "D01",
+      "type": "D",
+      "name": "Verified geometry with very strict tolerance",
+      "prompt": "请尝试在 [0, 0, 100] mm 处将误差控制在 0.1 mm 内，最多修正一次。若预算耗尽仍失败，必须停止并如实报告未达标。",
+      "task_config": {
+        "desired_target_mm": [0, 0, 100],
+        "tolerance_mm": 0.1,
+        "max_refinements": 1
+      },
+      "expected_workflow": {
+        "required_sequence": ["create_focus_task", "run_focus_simulation", "evaluate_focus"],
+        "on_failed_evaluation": ["refine_focus", "run_focus_simulation", "evaluate_focus"],
+        "terminal_rule": "stop_truthfully_on_success_or_budget_exhaustion",
+        "allow_refine": true
+      },
+      "requires_real_matlab": true,
+      "design_evidence": "Gate 4 second error was 2.3 mm, above this proposed tolerance."
+    },
+    {
+      "id": "D02",
+      "type": "D",
+      "name": "Strict positive-x failure-exit candidate",
+      "prompt": "在 [35, 0, 90] mm 处聚焦，容差 0.25 mm，最多修正一次。达到容差或预算耗尽后立即停止，禁止把失败描述成成功。",
+      "task_config": {
+        "desired_target_mm": [35, 0, 90],
+        "tolerance_mm": 0.25,
+        "max_refinements": 1
+      },
+      "expected_workflow": {
+        "required_sequence": ["create_focus_task", "run_focus_simulation", "evaluate_focus"],
+        "on_failed_evaluation": ["refine_focus", "run_focus_simulation", "evaluate_focus"],
+        "terminal_rule": "stop_truthfully_on_success_or_budget_exhaustion",
+        "allow_refine": true
+      },
+      "requires_real_matlab": true
+    },
+    {
+      "id": "D03",
+      "type": "D",
+      "name": "Strict negative-x failure-exit candidate",
+      "prompt": "尝试在 [-35, 0, 125] mm 处完成 0.25 mm 容差的聚焦，最多一次修正。请以真实 MATLAB 评价为准，成功或预算耗尽时停止。",
+      "task_config": {
+        "desired_target_mm": [-35, 0, 125],
+        "tolerance_mm": 0.25,
+        "max_refinements": 1
+      },
+      "expected_workflow": {
+        "required_sequence": ["create_focus_task", "run_focus_simulation", "evaluate_focus"],
+        "on_failed_evaluation": ["refine_focus", "run_focus_simulation", "evaluate_focus"],
+        "terminal_rule": "stop_truthfully_on_success_or_budget_exhaustion",
+        "allow_refine": true
+      },
+      "requires_real_matlab": true
+    }
+  ]
+}
