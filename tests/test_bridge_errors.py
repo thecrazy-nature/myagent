@@ -58,6 +58,55 @@ class MatlabBridgeErrorTests(unittest.TestCase):
                 run_simulation([0, 0, 100], task_id="unit_process_error")
         self.assertEqual(caught.exception.returncode, 7)
 
+    def test_valid_result_recovers_only_observed_shutdown_crash(self) -> None:
+        task_id = "unit_shutdown_recovery"
+
+        def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            del args, kwargs
+            result = {
+                "status": "success", "task_id": task_id,
+                "requested_focus_mm": [0, 0, 100], "actual_peak_mm": [0, 0, 94.2],
+                "peak_power": 1.0, "peak_power_definition": "test",
+                "requested_power": 0.9, "runtime_sec": 1.0,
+            }
+            (self.runs_root / task_id / "result.json").write_text(
+                json.dumps(result), encoding="utf-8"
+            )
+            stderr = "std::terminate() detected\nMATLAB is exiting because of fatal error"
+            return subprocess.CompletedProcess(["matlab"], 3, "", stderr)
+
+        with (
+            patch("bridge.matlab_bridge._resolve_matlab_executable", return_value="matlab"),
+            patch("bridge.matlab_bridge.subprocess.run", side_effect=fake_run),
+        ):
+            result = run_simulation([0, 0, 100], task_id=task_id)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["process_warning"]["warning_type"], "MatlabShutdownError")
+        self.assertEqual(result["process_warning"]["returncode"], 3)
+
+    def test_valid_result_does_not_hide_unrelated_nonzero_exit(self) -> None:
+        task_id = "unit_unrelated_nonzero"
+
+        def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            del args, kwargs
+            result = {
+                "status": "success", "task_id": task_id,
+                "requested_focus_mm": [0, 0, 100], "actual_peak_mm": [0, 0, 94.2],
+                "peak_power": 1.0, "peak_power_definition": "test",
+                "requested_power": 0.9, "runtime_sec": 1.0,
+            }
+            (self.runs_root / task_id / "result.json").write_text(
+                json.dumps(result), encoding="utf-8"
+            )
+            return subprocess.CompletedProcess(["matlab"], 7, "", "unrelated failure")
+
+        with (
+            patch("bridge.matlab_bridge._resolve_matlab_executable", return_value="matlab"),
+            patch("bridge.matlab_bridge.subprocess.run", side_effect=fake_run),
+        ):
+            with self.assertRaises(MatlabProcessError):
+                run_simulation([0, 0, 100], task_id=task_id)
+
     def test_missing_result(self) -> None:
         completed = subprocess.CompletedProcess(["matlab"], 0, "", "")
         with (

@@ -115,6 +115,15 @@ def run_simulation(
     stdout_path.write_text(completed.stdout, encoding="utf-8")
     stderr_path.write_text(completed.stderr, encoding="utf-8")
     if completed.returncode != 0:
+        recovered = _recover_completed_shutdown_result(
+            result_path,
+            completed.stderr,
+            completed.returncode,
+            expected_task_id=resolved_task_id,
+            run_dir=run_dir,
+        )
+        if recovered is not None:
+            return recovered
         raise MatlabProcessError(
             f"MATLAB returned nonzero exit code {completed.returncode}.",
             task_id=resolved_task_id,
@@ -128,19 +137,59 @@ def run_simulation(
             run_dir=run_dir,
         )
 
+    return _load_validated_result(
+        result_path,
+        expected_task_id=resolved_task_id,
+        run_dir=run_dir,
+    )
+
+
+def _recover_completed_shutdown_result(
+    result_path: Path,
+    stderr: str,
+    returncode: int,
+    *,
+    expected_task_id: str,
+    run_dir: Path,
+) -> dict[str, Any] | None:
+    """Accept a complete result only for the observed post-result shutdown crash."""
+
+    signatures = ("std::terminate() detected", "MATLAB is exiting because of fatal error")
+    if not result_path.is_file() or not all(signature in stderr for signature in signatures):
+        return None
+    payload = dict(
+        _load_validated_result(
+            result_path,
+            expected_task_id=expected_task_id,
+            run_dir=run_dir,
+        )
+    )
+    payload["process_warning"] = {
+        "warning_type": "MatlabShutdownError",
+        "message": (
+            "MATLAB produced and atomically persisted a complete validated result, "
+            "then reported std::terminate during process shutdown."
+        ),
+        "returncode": returncode,
+    }
+    return payload
+
+
+def _load_validated_result(
+    result_path: Path,
+    *,
+    expected_task_id: str,
+    run_dir: Path,
+) -> dict[str, Any]:
     try:
         payload = json.loads(result_path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exception:
         raise MatlabResultError(
             f"Could not parse MATLAB result.json: {exception}",
-            task_id=resolved_task_id,
+            task_id=expected_task_id,
             run_dir=run_dir,
         ) from exception
-    return validate_success_result(
-        payload,
-        expected_task_id=resolved_task_id,
-        run_dir=run_dir,
-    )
+    return validate_success_result(payload, expected_task_id=expected_task_id, run_dir=run_dir)
 
 
 def _validate_target(target_mm: Sequence[Real]) -> list[float]:
@@ -187,29 +236,29 @@ def _resolve_matlab_executable() -> str:
     if configured:
         candidate = shutil.which(configured)
         if candidate:
-            return _prefer_direct_windows_binary(candidate)
+            return _prefer_windows_launcher(candidate)
         configured_path = Path(configured).expanduser()
         if configured_path.is_file():
-            return _prefer_direct_windows_binary(str(configured_path.resolve()))
+            return _prefer_windows_launcher(str(configured_path.resolve()))
         raise MatlabExecutableNotFound(
             f"MATLAB_EXECUTABLE does not resolve to a file: {configured}",
         )
     candidate = shutil.which("matlab")
     if candidate:
-        return _prefer_direct_windows_binary(candidate)
+        return _prefer_windows_launcher(candidate)
     raise MatlabExecutableNotFound(
         "MATLAB executable was not found on PATH; set MATLAB_EXECUTABLE.",
     )
 
 
-def _prefer_direct_windows_binary(executable: str) -> str:
-    """Avoid the Windows launcher, whose detached child defeats run timeouts."""
+def _prefer_windows_launcher(executable: str) -> str:
+    """Use MATLAB's supported Windows launcher with the synchronous -wait flag."""
 
     resolved = Path(executable).resolve()
-    if os.name == "nt" and resolved.parent.name.lower() == "bin":
-        direct = resolved.parent / "win64" / "MATLAB.exe"
-        if direct.is_file():
-            return str(direct)
+    if os.name == "nt" and resolved.parent.name.lower() == "win64":
+        launcher = resolved.parent.parent / "matlab.exe"
+        if launcher.is_file():
+            return str(launcher.resolve())
     return str(resolved)
 
 
@@ -225,7 +274,8 @@ def _build_matlab_command(
         f"addpath('{interface}','-begin'); "
         f"agent_run_simulation('{config}','{result}');"
     )
-    return [matlab_executable, "-batch", expression]
+    wait_arguments = ["-wait"] if os.name == "nt" else []
+    return [matlab_executable, *wait_arguments, "-batch", expression]
 
 
 def _matlab_quote(path: Path) -> str:

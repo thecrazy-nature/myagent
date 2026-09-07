@@ -148,6 +148,8 @@ def run_task_simulation(agent_task_id: str) -> dict[str, Any]:
         "matlab_runtime_sec": float(matlab_result["runtime_sec"]),
         "bridge_wall_time_sec": bridge_wall_time_sec,
     }
+    if isinstance(matlab_result.get("process_warning"), dict):
+        event["process_warning"] = matlab_result["process_warning"]
     state["history"].append(event)
     state["status"] = "simulated"
     state["updated_at"] = _utc_now()

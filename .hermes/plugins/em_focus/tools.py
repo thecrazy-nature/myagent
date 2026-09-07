@@ -28,9 +28,9 @@ def create_focus_task(args: dict[str, Any], **kwargs: Any) -> str:
     return _invoke(
         args,
         lambda: _agent_api().create_task(
-            args.get("target_mm"),
-            args.get("tolerance_mm", 5.0),
-            args.get("max_refinements", 2),
+            args["target_mm"],
+            args["tolerance_mm"],
+            args["max_refinements"],
         ),
     )
 
@@ -58,6 +58,41 @@ def refine_focus(args: dict[str, Any], **kwargs: Any) -> str:
     return _invoke(args, lambda: _agent_api().refine_task(args.get("agent_task_id")))
 
 
+def create_array_design_task(args: dict[str, Any], **kwargs: Any) -> str:
+    """Create a persisted, physically constrained geometry-design task."""
+    del kwargs
+    return _invoke(args, lambda: _array_api().create_design_task(
+        args["focus_target_mm"], args["focus_tolerance_mm"], args["search_budget"],
+        args["allowed_geometry_families"], args["objective_weights"],
+        args.get("roi_radius_mm", 5.0), args.get("roi_half_depth_mm", 10.0),
+    ))
+
+
+def evaluate_array_geometry(args: dict[str, Any], **kwargs: Any) -> str:
+    """Evaluate one deterministic geometry with real MATLAB."""
+    del kwargs
+    return _invoke(args, lambda: _array_api().evaluate_geometry(
+        args["design_task_id"], args["geometry_family"], args["parameters"], args["seed"]
+    ))
+
+
+def search_array_geometry(args: dict[str, Any], **kwargs: Any) -> str:
+    """Search one parameterized family in one real MATLAB batch."""
+    del kwargs
+    return _invoke(args, lambda: _array_api().search_geometry(
+        args["design_task_id"], args["geometry_family"], args["parameter_bounds"],
+        args["candidate_budget"], args["seed"],
+    ))
+
+
+def save_array_design(args: dict[str, Any], **kwargs: Any) -> str:
+    """Persist the final selected evaluated design."""
+    del kwargs
+    return _invoke(args, lambda: _array_api().save_design(
+        args["design_task_id"], args["geometry_id"], args["selection_reason"]
+    ))
+
+
 def _invoke(args: dict[str, Any], operation: Callable[[], dict[str, Any]]) -> str:
     try:
         return _json(operation())
@@ -77,11 +112,15 @@ def _error_json(exception: Exception, args: Any) -> str:
     if isinstance(candidate_from_exception, str):
         agent_task_id = candidate_from_exception
     if agent_task_id is None and isinstance(args, dict):
-        candidate = args.get("agent_task_id")
+        candidate = args.get("agent_task_id") or args.get("design_task_id")
         if isinstance(candidate, str):
             agent_task_id = candidate
     if agent_task_id is not None:
-        result["agent_task_id"] = agent_task_id
+        key = "design_task_id" if agent_task_id.startswith("design_") else "agent_task_id"
+        result[key] = agent_task_id
+    simulation_run_id = getattr(exception, "task_id", None)
+    if isinstance(simulation_run_id, str) and simulation_run_id.startswith("sim_"):
+        result["simulation_run_id"] = simulation_run_id
     return _json(result)
 
 
@@ -97,3 +136,12 @@ def _agent_api() -> Any:
     import em_focus_agent
 
     return em_focus_agent
+
+
+def _array_api() -> Any:
+    project_root = str(PROJECT_ROOT)
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    import array_design
+
+    return array_design

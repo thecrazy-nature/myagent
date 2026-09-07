@@ -44,6 +44,120 @@ MATLAB optimizer.
 
 The project-level Hermes instruction is defined in [.hermes.md](.hermes.md).
 
+## Autonomous Array Geometry Design
+
+The independent **Array Geometry Designer** tab adds a second natural-language
+workflow without changing `run_focus_simulation` or the existing focus Agent:
+
+```text
+Natural language design goal
+→ Hermes chooses a bounded geometry-family search
+→ deterministic coordinate generator and constraint checks
+→ one real MATLAB process evaluates a candidate batch
+→ baseline-normalized metrics and objective score
+→ Hermes decides whether to search again or stop
+→ full selected design is persisted
+```
+
+This is **array geometry optimization, not individual antenna element
+electromagnetic redesign**. The radiator model, frequency, and polarization
+representation remain frozen. The first supported family is a spherical cap
+parameterized only by surface depth (0–20 mm); identical family, parameters,
+and integer seed always produce identical coordinates. A curved family is used
+because the fully packed 16×16 planar baseline has no honest in-plane movement
+under its unchanged aperture and actual 7.5 mm minimum spacing.
+
+Every comparison fixes 256 elements, the 112.5×112.5 mm XY envelope, the
+baseline 7.5 mm nearest-neighbour spacing, 28 GHz, and the scalar isotropic
+point-source model. Candidate carrier weights are rescaled so
+`sum(abs(w).^2)` equals the real baseline value. Array geometry changes the
+effective aperture and spatial spectrum and can therefore change lateral
+resolution, axial focusing, and energy distribution, but these metrics may
+trade off; no result is described as improving all objectives unless the real
+MATLAB data supports that claim.
+
+The current field model is an XZ slice, so it reports `fwhm_x_mm` only and does
+not invent a Y-direction FWHM. FWHM and Z depth of focus use the contiguous
+region around the measured local peak where normalized `|E|² >= 0.5`, with
+linear interpolation at both threshold crossings. Energy concentration is the
+2D XZ integral inside a fixed desired-target ROI (`|x-x_target| <= 5 mm`,
+`|z-z_target| <= 10 mm` by default) divided by the integral over the common
+201×201 XZ evaluation area.
+
+The deterministic score (lower is better) is:
+
+```text
+w_spot * candidate_fwhm_x / baseline_fwhm_x
++ w_dof * candidate_dof_z / baseline_dof_z
+- w_energy * candidate_energy_ratio / baseline_energy_ratio
+```
+
+Weights are normalized to sum to one. Focus error beyond the task tolerance,
+spacing/aperture/count violations, overlap, and non-finite MATLAB metrics make
+a candidate invalid with score `1e9`. The full task state, real coordinates,
+profiles, MATLAB logs, comparison, and final selection are stored under
+`runs/array_designs/<design_task_id>/`.
+
+Array-design tools are `create_array_design_task`,
+`evaluate_array_geometry`, `search_array_geometry`, and `save_array_design`.
+The search tool batches all candidates from one deterministic coarse grid into
+one dedicated MATLAB `-batch` process; it does not ask the LLM to guess element
+coordinates.
+
+The real Stage A/B evidence and DESIGN-A–L checklist are in
+[docs/ARRAY_DESIGN_VALIDATION_REPORT.md](docs/ARRAY_DESIGN_VALIDATION_REPORT.md).
+
+## Running the Interactive App
+
+The local Streamlit application keeps natural language as the primary entry
+point and sends the displayed task text unchanged to the real Hermes Agent:
+
+```powershell
+.\proxy-on.ps1
+.\run-app.ps1
+```
+
+Then open `http://localhost:8501`. Prerequisites are:
+
+- Clash is running on `127.0.0.1:7897` and the current PowerShell session has
+  the project proxy variables from `proxy-on.ps1`.
+- MATLAB is installed and available through `MATLAB_EXECUTABLE` or `PATH`.
+- Hermes OAuth is already configured in the existing Hermes runtime.
+- UI dependencies have been installed in that same runtime with
+  `uv pip install --python "$env:LOCALAPPDATA\hermes\hermes-agent\venv\Scripts\python.exe" -r requirements-ui.txt`.
+
+The app deliberately launches Hermes through the verified project-compatible
+module path:
+
+```text
+Browser
+→ Streamlit
+→ existing Hermes Python -m hermes_cli.main
+→ project em_focus Plugin
+→ Python Bridge
+→ matlab.exe -wait -batch
+→ structured observation
+→ Hermes evaluation / replanning / final response
+```
+
+The default **Natural Language Mode** submits the researcher's original text;
+the UI does not extract parameters or call domain tools itself. **Structured
+Mode** is an advanced helper that renders target, tolerance, and refinement
+fields into a visible natural-language request, then sends that request through
+the same Hermes workflow.
+
+The page polls the persisted Hermes session and displays only observable Tool
+Calls, arguments, structured observations, and state changes. It never displays
+hidden chain-of-thought. Iteration History is built from the real
+`runs/agent_tasks/<id>/agent_state.json`, and Recent Tasks reads only the
+`runs/agent_tasks/` tree; no application database is added.
+
+MATLAB cold start can take about one minute. Replanning can start MATLAB more
+than once, so the page provides stage-level updates while the run is active.
+Failures are separated into Agent Error, Scientific Failure, and Infrastructure
+Error. `peak_power` retains the MATLAB definition shown below and is never
+labelled as watts.
+
 ## Why Agent?
 
 ### Traditional MATLAB workflow
@@ -190,7 +304,10 @@ budget, stop-logic, and trajectory-parser checks should remain deterministic
 unit/workflow tests. Only explicitly labelled end-to-end runs use real Hermes
 and MATLAB; mock output must never be reported as an end-to-end result.
 
-The 12-task suite is designed but has not been executed.
+The full 12-task suite has not been executed. A four-task A01/B01/C01/D01
+smoke run is retained under `benchmark/smoke_results.*`; full benchmark
+execution is intentionally paused while the interactive application is the
+active development target.
 
 ## Scope and physical model
 

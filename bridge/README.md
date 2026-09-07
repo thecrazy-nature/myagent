@@ -32,8 +32,15 @@ runs/<task_id>/
 显式 task ID 必须是安全的 Windows 目录名且不能与已有任务重复。
 
 bridge 使用参数列表和 `subprocess.run(..., shell=False)`，不会使用 MATLAB Engine。
-在 Windows 上会把 PATH 中的 `matlab.exe` 启动器解析为同一安装下真实的
-`bin/win64/MATLAB.exe`；这是为了让 Python timeout 能终止实际进程并避免孤儿进程。
+在 Windows 上使用 MathWorks 支持的 `bin/matlab.exe -wait -batch` 启动方式；
+`-wait` 使 Python 同步等待 MATLAB 完成并取得退出状态，同时避免直接启动内部
+`bin/win64/MATLAB.exe` 时观察到的退出阶段 lifecycle crash。
+
+本机 R2024b 偶发在完整 `result.json` 原子写入之后、`ddux` shutdown 清理阶段
+发生 `std::terminate`。bridge 仅在 stderr 同时匹配已观察到的两个 shutdown
+特征，且该次新建 run 目录中的 success JSON 通过全部字段、有限数、task ID
+契约校验时接收结果，并附加 `process_warning=MatlabShutdownError`。普通非零退出、
+缺失或损坏结果仍抛出异常，因此该窄恢复不会伪造或放宽科学结果。
 
 ## 异常
 

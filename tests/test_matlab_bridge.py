@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bridge import InvalidSimulationInput, run_simulation
-from bridge.matlab_bridge import _matlab_quote, _prefer_direct_windows_binary
+from bridge.matlab_bridge import _matlab_quote, _prefer_windows_launcher
 
 
 class MatlabBridgeInputTests(unittest.TestCase):
@@ -39,7 +39,7 @@ class MatlabBridgeInputTests(unittest.TestCase):
             run_simulation([0, 0, 100], task_id="CON")
 
     def test_windows_launcher_resolution_is_stable(self) -> None:
-        resolved = _prefer_direct_windows_binary("matlab")
+        resolved = _prefer_windows_launcher("matlab")
         self.assertIsInstance(resolved, str)
 
     def test_matlab_path_quoting_handles_spaces_and_apostrophes(self) -> None:
@@ -68,7 +68,9 @@ class MatlabBridgeInputTests(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-                self.assertEqual(command[1], "-batch")
+                self.assertIn("-batch", command)
+                if __import__("os").name == "nt":
+                    self.assertEqual(command[1:3], ["-wait", "-batch"])
                 self.assertFalse(bool(kwargs["shell"]))
                 return subprocess.CompletedProcess(command, 0, "stdout", "stderr")
 

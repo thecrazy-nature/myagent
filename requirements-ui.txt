@@ -1,0 +1,2 @@
+streamlit>=1.41,<2
+websockets>=15,<16

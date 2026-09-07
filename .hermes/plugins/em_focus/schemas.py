@@ -32,7 +32,9 @@ CREATE_FOCUS_TASK_SCHEMA = {
         "Call first to create and structure a new scientific near-field focusing "
         "task. It records the researcher's immutable desired target and constraints, "
         "plus the initial commanded target used by the workflow. Call it exactly "
-        "once per requested task."
+        "once per requested task. Always provide target_mm, tolerance_mm, and "
+        "max_refinements. Copy user-stated constraints exactly; use the documented "
+        "defaults only when the user omitted them."
     ),
     "parameters": {
         "type": "object",
@@ -54,7 +56,7 @@ CREATE_FOCUS_TASK_SCHEMA = {
                 "description": "Maximum number of feedback corrections allowed.",
             },
         },
-        "required": ["target_mm"],
+        "required": ["target_mm", "tolerance_mm", "max_refinements"],
         "additionalProperties": False,
     },
 }
@@ -120,6 +122,121 @@ REFINE_FOCUS_SCHEMA = {
             }
         },
         "required": ["agent_task_id"],
+        "additionalProperties": False,
+    },
+}
+
+OBJECTIVE_WEIGHTS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "lateral_spot": {"type": "number", "exclusiveMinimum": 0},
+        "depth_of_focus": {"type": "number", "exclusiveMinimum": 0},
+        "energy_concentration": {"type": "number", "exclusiveMinimum": 0},
+    },
+    "required": ["lateral_spot", "depth_of_focus", "energy_concentration"],
+    "additionalProperties": False,
+}
+
+CREATE_ARRAY_DESIGN_TASK_SCHEMA = {
+    "name": "create_array_design_task",
+    "description": (
+        "Call exactly once for a new array-geometry design request. It freezes the real planar "
+        "baseline's element count, aperture, actual 7.5 mm minimum spacing, frequency, element "
+        "model, XZ evaluation grid, and equal-total-input-power rule. It structures goals only; "
+        "it does not calculate fields. The currently supported searchable family is spherical_cap."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "focus_target_mm": {**VECTOR_SCHEMA, "description": "Immutable desired [x,y,z] target in mm; y must be 0."},
+            "focus_tolerance_mm": {"type": "number", "exclusiveMinimum": 0, "description": "Hard maximum focus error in mm."},
+            "search_budget": {"type": "integer", "minimum": 1, "maximum": 12, "description": "Total number of non-baseline MATLAB candidates allowed."},
+            "allowed_geometry_families": {
+                "type": "array", "items": {"type": "string", "enum": ["spherical_cap"]},
+                "minItems": 1, "uniqueItems": True,
+                "description": "Low-dimensional families Hermes may choose to search."
+            },
+            "objective_weights": {**OBJECTIVE_WEIGHTS_SCHEMA, "description": "Positive priorities normalized by the deterministic scorer."},
+            "roi_radius_mm": {"type": "number", "exclusiveMinimum": 0, "default": 5.0, "description": "XZ ROI half-width around desired x."},
+            "roi_half_depth_mm": {"type": "number", "exclusiveMinimum": 0, "default": 10.0, "description": "XZ ROI half-depth around desired z."},
+        },
+        "required": ["focus_target_mm", "focus_tolerance_mm", "search_budget", "allowed_geometry_families", "objective_weights"],
+        "additionalProperties": False,
+    },
+}
+
+EVALUATE_ARRAY_GEOMETRY_SCHEMA = {
+    "name": "evaluate_array_geometry",
+    "description": (
+        "Evaluate exactly one deterministic geometry with the dedicated real MATLAB path. "
+        "Every task must call this first with geometry_family='baseline' and empty parameters. "
+        "It returns measured X-direction FWHM, Z depth of focus, XZ ROI energy concentration, "
+        "focus error, and fixed-input-power peak power. Never infer a Y FWHM from this XZ model."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "design_task_id": {"type": "string"},
+            "geometry_family": {"type": "string", "enum": ["baseline", "spherical_cap"]},
+            "parameters": {
+                "type": "object",
+                "properties": {"depth_mm": {"type": "number", "minimum": 0, "maximum": 20}},
+                "additionalProperties": False,
+            },
+            "seed": {"type": "integer", "default": 0},
+        },
+        "required": ["design_task_id", "geometry_family", "parameters", "seed"],
+        "additionalProperties": False,
+    },
+}
+
+SEARCH_ARRAY_GEOMETRY_SCHEMA = {
+    "name": "search_array_geometry",
+    "description": (
+        "Run a deterministic coarse parameter grid for one allowed family after baseline evaluation. "
+        "The tool, not Hermes, creates all coordinates and rejects physical violations. All requested "
+        "candidates are evaluated in one real MATLAB cold start and ranked by the documented "
+        "baseline-normalized multi-objective score (lower is better). Hermes chooses whether another "
+        "bounded search is warranted after examining the structured result."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "design_task_id": {"type": "string"},
+            "geometry_family": {"type": "string", "enum": ["spherical_cap"]},
+            "parameter_bounds": {
+                "type": "object",
+                "properties": {
+                    "depth_mm": {
+                        "type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2,
+                        "description": "Inclusive spherical-cap depth range [low, high] in mm, within [0,20]."
+                    }
+                },
+                "required": ["depth_mm"], "additionalProperties": False,
+            },
+            "candidate_budget": {"type": "integer", "minimum": 1, "maximum": 12},
+            "seed": {"type": "integer", "default": 0},
+        },
+        "required": ["design_task_id", "geometry_family", "parameter_bounds", "candidate_budget", "seed"],
+        "additionalProperties": False,
+    },
+}
+
+SAVE_ARRAY_DESIGN_SCHEMA = {
+    "name": "save_array_design",
+    "description": (
+        "Persist one evaluated candidate, or the baseline if no candidate is genuinely better, as the "
+        "final design. Saves full deterministic geometry JSON, element coordinate CSV, MATLAB metrics, "
+        "baseline comparison, search trajectory, and selection reason. Call once after search decisions end."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "design_task_id": {"type": "string"},
+            "geometry_id": {"type": "string", "description": "Evaluated geometry_id returned by baseline evaluation or search."},
+            "selection_reason": {"type": "string", "minLength": 1, "description": "Truthful evidence-based reason, including trade-offs or no-improvement finding."},
+        },
+        "required": ["design_task_id", "geometry_id", "selection_reason"],
         "additionalProperties": False,
     },
 }

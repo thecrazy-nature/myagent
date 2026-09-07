@@ -1,6 +1,6 @@
 name: em_focus
-version: 0.3.0
-description: Project-local tools for an LLM-driven MATLAB electromagnetic simulation workflow
+version: 0.4.0
+description: Project-local tools for LLM-driven MATLAB focusing and constrained array-geometry design
 kind: standalone
 provides_tools:
   - em_focus_ping
@@ -8,3 +8,7 @@ provides_tools:
   - run_focus_simulation
   - evaluate_focus
   - refine_focus
+  - create_array_design_task
+  - evaluate_array_geometry
+  - search_array_geometry
+  - save_array_design
