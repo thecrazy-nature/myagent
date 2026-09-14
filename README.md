@@ -8,10 +8,31 @@ orchestrates tools, evaluates structured observations, decides whether another
 experiment is needed, and reports the outcome. MATLAB remains responsible for
 all electromagnetic numerical computation and focusing algorithms.
 
-The stable MATLAB capability is an independent extraction of the deterministic
-single-target, carrier-frequency near-field focusing path from
+The MATLAB capability is an independent extraction of the deterministic
+multi-harmonic near-field focusing path from
 `F:\matlabcode\multiuser`. It does not require the source project on the
 MATLAB path and does not use mock data.
+
+The focus workflow now accepts one to eight simultaneous target points, a
+1–100 GHz carrier (the UI offers 24/28/39 GHz), and a square 4×4–32×32 planar
+array (the UI offers 64/144/256/400 elements). MATLAB uses the selected
+frequency and element count in its real field calculation. Every user is
+assigned a distinct harmonic order around q=0 and evaluated at `fc + q*fm`;
+multiple users are never combined on q=0. MATLAB reports a peak, power,
+FWHM, DOF, and target-local-peak/maximum-sidelobe ratio for every user. A task
+passes only when every user satisfies the tolerance; the aggregate error is
+the worst user error.
+
+The extracted core currently synthesizes an independent ideal complex weight
+vector for each active harmonic. This is a useful per-harmonic upper-bound
+model, not a claim that the weights have already been projected into one
+coupled rectangular-pulse TMA switching sequence. The UI method card states
+this boundary on every result.
+
+Polarization can be selected and is persisted as experiment metadata, but the
+current isotropic scalar point-source solver is polarization independent. The
+application states this explicitly and does not claim polarization-dependent
+numerical results. A vector/dyadic element model would be required for that.
 
 ## Architecture and responsibility boundary
 
@@ -109,8 +130,9 @@ The real Stage A/B evidence and DESIGN-A–L checklist are in
 
 ## Running the Interactive App
 
-The local Streamlit application keeps natural language as the primary entry
-point and sends the displayed task text unchanged to the real Hermes Agent:
+The local Streamlit application uses a multi-turn chat as the primary entry
+point. It sends the user's message plus the visible experiment configuration
+to the real Hermes Agent:
 
 ```powershell
 .\proxy-on.ps1
@@ -140,17 +162,72 @@ Browser
 → Hermes evaluation / replanning / final response
 ```
 
-The default **Natural Language Mode** submits the researcher's original text;
-the UI does not extract parameters or call domain tools itself. **Structured
-Mode** is an advanced helper that renders target, tolerance, and refinement
-fields into a visible natural-language request, then sends that request through
-the same Hermes workflow.
+The Chinese **智能体对话** tab is one unified, continuous conversation. Follow-up
+turns resume the same Hermes session rather than reconstructing an answer in
+Streamlit. The user does not choose "focus" or "array design" in advance, and
+the UI does not select tools. Hermes determines whether a turn needs a plain
+answer, the focus workflow, or the independent array-design workflow; the UI
+identifies numerical result types only from actual Tool Calls.
 
-The page polls the persisted Hermes session and displays only observable Tool
-Calls, arguments, structured observations, and state changes. It never displays
-hidden chain-of-thought. Iteration History is built from the real
-`runs/agent_tasks/<id>/agent_state.json`, and Recent Tasks reads only the
-`runs/agent_tasks/` tree; no application database is added.
+The experiment panel exposes carrier and modulation frequency, polarization label, element
+count, user count and target coordinates, tolerance, and refinement budget.
+The physical target bounds update with wavelength. These controls are rendered
+into explicit natural-language context for Hermes; they never call MATLAB or
+choose a workflow directly. Array-geometry comparisons remain frozen to their
+28 GHz / 256-element baseline so existing fair-comparison evidence is not
+silently redefined.
+
+Submissions enter the file-backed **任务中心** under `runs/ui_jobs/`. A separate
+single-consumer worker runs Hermes and MATLAB, so closing the browser does not
+stop an active task. The task center auto-refreshes persisted status, elapsed
+time, heuristic ETA, and MATLAB child-process information. Queued tasks can be
+paused without starting; active tasks pause/resume the exact Hermes/MATLAB
+process tree through `psutil`; cancellation terminates that tree. Completion
+notifications remain pending until the browser is reopened. Interrupted
+failures can resume the same Hermes session, call `get_focus_task_state`, and
+continue from the last valid persisted state instead of repeating a completed
+MATLAB run.
+
+The Chinese **结果可视化** tab is a read-only browser for persisted focus tasks
+and array designs. Every new focus run stores `field_data.json` plus a full
+`field_data.mat`. The viewer plots true per-harmonic XZ heatmaps, target-local
+zoom, lateral main/side-lobe and axial profiles, first/last iteration maps,
+multi-task overlays, and real element coordinates. PNG, CSV, MAT, Markdown
+report, and an all-in-one ZIP can be downloaded without rerunning MATLAB.
+
+### Run governance and reproducibility
+
+The UI shows a prominent data-boundary notice before submission and persists a
+governance snapshot with every background job. The snapshot records the actual
+Hermes model ID observed for that session, Hermes runtime version, versioned
+Prompt/Tool/MATLAB contracts from `governance/versions.json`, SHA-256 hashes of
+the effective project sources, Git commit plus dirty-working-tree status,
+Python platform, and the MATLAB version/release/architecture returned by the
+same numerical process. A dirty tree is reported explicitly because a commit
+alone cannot reproduce uncommitted source.
+
+Hermes token counters are read from the local session database without reading
+message bodies or authentication credentials. For resumed conversations the UI
+records the current turn's counter delta, not the whole conversation again.
+Input, output, cache-read, cache-write, reasoning tokens and API-call count are
+kept separately. Actual USD cost is shown only when the provider returns it;
+subscription-included or unavailable pricing is labelled as such instead of
+being presented as a fabricated zero-cost measurement.
+
+Focus runs use MATLAB seed `0` with the `twister` RNG policy (the current focus
+solver has no stochastic search). Array-design calls continue to persist their
+explicit integer seed. The task center's **重复运行** button deliberately starts
+a fresh Hermes conversation with the exact same task text. It warns that this
+consumes model quota and MATLAB time, then reports Agent Tool-trajectory
+consistency separately from deterministic MATLAB numerical consistency. No
+repeat is triggered automatically.
+
+The external-service notice states that the natural-language request, scenario,
+Tool schemas, Tool arguments, IDs, and compact MATLAB metrics can be sent to the
+configured model provider. Full 2D field arrays, MAT artifacts, MATLAB logs,
+and authentication credentials remain local and are not placed in Tool
+observations. The report and ZIP exports include the persisted governance
+evidence (`governance.json`) when it is available.
 
 MATLAB cold start can take about one minute. Replanning can start MATLAB more
 than once, so the page provides stage-level updates while the run is active.
@@ -192,6 +269,8 @@ underlying numerical algorithm.
 
 - `create_focus_task` structures a scientific focusing task and preserves the
   researcher's desired target and constraints.
+- `get_focus_task_state` reads a durable checkpoint only for interrupted-task
+  recovery and exposes the valid next action.
 - `run_focus_simulation` invokes the real MATLAB electromagnetic solver and
   focusing algorithm for one experiment.
 - `evaluate_focus` performs task-level evaluation of the MATLAB result against
@@ -311,12 +390,14 @@ active development target.
 
 ## Scope and physical model
 
-- 28 GHz carrier (`lambda_c = 10.7142857143 mm`)
-- 16 x 16 planar array, 0.7 carrier-wavelength spacing
+- 1–100 GHz carrier (UI presets: 24, 28, and 39 GHz)
+- configurable modulation frequency (UI presets: 100, 200, and 500 MHz)
+- 4 x 4 through 32 x 32 planar array, 0.7 carrier-wavelength spacing
 - isotropic scalar point-source elements
-- deterministic `axial_null` near-field weight synthesis
-- one target on the x-z plane (`y = 0`)
-- accepted target domain: `x = [-75, 75] mm`, `z = [53.5714, 150] mm`
+- deterministic independent per-harmonic `axial_null` near-field weight synthesis
+- one distinct harmonic order per user; up to eight targets on the x-z plane (`y = 0`)
+- accepted target domain scales with carrier wavelength: `x = [-7λc, 7λc]`,
+  `z = [5λc, 14λc]`
 - field grid: paper evaluation region `x = [-100, 100] mm`,
   `z = [20, 160] mm`, 201 x 201 samples
 
@@ -388,6 +469,13 @@ comparison, exclusions, and gate status. See
 [matlab_core/DEPENDENCIES.md](matlab_core/DEPENDENCIES.md) for the exact runtime
 closure. The command-line-interface evidence is in
 [agent_interface/VALIDATION_REPORT.md](agent_interface/VALIDATION_REPORT.md).
+
+## Presentation
+
+The editable Chinese mentor presentation and its evidence-backed figures are in
+[`docs/presentation/`](docs/presentation/). The deck covers the application's
+purpose, architecture, Agent/MATLAB responsibility boundary, multi-harmonic
+workflow, interface, validation evidence, limitations, and research roadmap.
 
 ## Future work
 

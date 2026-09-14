@@ -46,6 +46,8 @@ MATLAB path。它不使用 GUI、Live Script、base workspace、`input()` 或文
 - `peak_power_definition`：上述物理含义的机器可读说明。
 - `requested_power`：请求点处精确计算的未经归一化标量模型 `|E|^2`。
 - `runtime_sec`：接口内从读配置到获得仿真结果的墙钟时间，不包含 MATLAB 进程启动时间。
+- `matlab_version`、`matlab_release`、`matlab_arch`：由执行本次数值任务的同一 MATLAB 进程返回。
+- `random_seed=0`、`rng_algorithm="twister"`：可重复性治理信息；当前聚焦核心不含随机搜索。
 
 接口不计算聚焦误差、成功阈值、Agent 决策、重试或参数修正。
 

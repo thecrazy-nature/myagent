@@ -2,3 +2,21 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Local credentials and provider configuration (the GitHub repository is public).
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+**/auth.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Ephemeral UI jobs and local verification runs.
+runs/ui_jobs/
+runs/verify_harmonics_*/
+
+# Locally rendered slide previews; the editable PPTX/PDF remain versioned.
+docs/presentation/preview/

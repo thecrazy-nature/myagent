@@ -5,6 +5,8 @@ test_root = string(fileparts(mfilename('fullpath')));
 reports = struct();
 reports.independent = test_core_independent();
 addpath(test_root, '-begin');
+reports.multiuser_harmonics = test_multiuser_harmonics();
+addpath(test_root, '-begin');
 reports.consistency = test_consistency();
 addpath(test_root, '-begin');
 reports.json = test_json_interface();

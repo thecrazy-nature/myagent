@@ -159,6 +159,127 @@ def validate_success_result(
             task_id=expected_task_id,
             run_dir=run_dir,
         )
+    if "user_count" in payload:
+        user_count = payload["user_count"]
+        if isinstance(user_count, bool) or not isinstance(user_count, int) or not 1 <= user_count <= 8:
+            raise MatlabResultError(
+                "MATLAB result field user_count must be an integer from 1 to 8.",
+                task_id=expected_task_id,
+                run_dir=run_dir,
+            )
+        for name in ("requested_focus_points_mm", "actual_peak_points_mm"):
+            _validate_vector_collection(
+                payload.get(name), name, user_count,
+                task_id=expected_task_id, run_dir=run_dir,
+            )
+        for name in ("peak_power_by_user", "requested_power_by_user"):
+            _validate_numeric_collection(
+                payload.get(name), name, user_count,
+                task_id=expected_task_id, run_dir=run_dir,
+            )
+        for name in ("frequency_hz", "wavelength_mm"):
+            value = payload.get(name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                raise MatlabResultError(
+                    f"MATLAB result field {name} must be finite numeric.",
+                    task_id=expected_task_id,
+                    run_dir=run_dir,
+                )
+        for name in ("modulation_frequency_hz",):
+            value = payload.get(name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                raise MatlabResultError(
+                    f"MATLAB result field {name} must be finite numeric.",
+                    task_id=expected_task_id,
+                    run_dir=run_dir,
+                )
+        for name in ("harmonic_orders", "harmonic_frequencies_hz"):
+            value = payload.get(name)
+            values = value if isinstance(value, list) else [value]
+            if values == [None]:
+                raise MatlabResultError(
+                    f"MATLAB result field {name} must be a nonempty numeric list.",
+                    task_id=expected_task_id,
+                    run_dir=run_dir,
+                )
+            _validate_numeric_collection(
+                value, name, len(values), task_id=expected_task_id, run_dir=run_dir
+            )
+        _validate_numeric_collection(
+            payload.get("user_harmonic_orders"), "user_harmonic_orders", user_count,
+            task_id=expected_task_id, run_dir=run_dir,
+        )
+        _validate_numeric_collection(
+            payload.get("user_harmonic_indices"), "user_harmonic_indices", user_count,
+            task_id=expected_task_id, run_dir=run_dir,
+        )
+        for name in (
+            "focus_error_mm_by_user", "fwhm_x_mm_by_user", "dof_z_mm_by_user",
+            "peak_to_sidelobe_ratio_db_by_user",
+        ):
+            _validate_numeric_collection(
+                payload.get(name), name, user_count,
+                task_id=expected_task_id, run_dir=run_dir,
+            )
+        artifacts = payload.get("artifacts")
+        if not isinstance(artifacts, dict) or not all(
+            isinstance(artifacts.get(name), str)
+            for name in ("field_json", "field_mat")
+        ):
+            raise MatlabResultError(
+                "MATLAB result artifact manifest is missing or invalid.",
+                task_id=expected_task_id,
+                run_dir=run_dir,
+            )
+        for filename in artifacts.values():
+            if Path(filename).name != filename or not (run_dir / filename).is_file():
+                raise MatlabResultError(
+                    f"MATLAB result artifact is missing or unsafe: {filename!r}.",
+                    task_id=expected_task_id,
+                    run_dir=run_dir,
+                )
+        if not isinstance(payload.get("element_count"), int):
+            raise MatlabResultError(
+                "MATLAB result field element_count must be an integer.",
+                task_id=expected_task_id,
+                run_dir=run_dir,
+            )
+        if not isinstance(payload.get("polarization"), str) or not isinstance(
+            payload.get("polarization_model"), str
+        ):
+            raise MatlabResultError(
+                "MATLAB polarization metadata is missing or invalid.",
+                task_id=expected_task_id,
+                run_dir=run_dir,
+            )
+        if not isinstance(payload.get("method"), str) or not isinstance(
+            payload.get("hardware_realization"), str
+        ):
+            raise MatlabResultError(
+                "MATLAB method-boundary metadata is missing or invalid.",
+                task_id=expected_task_id,
+                run_dir=run_dir,
+            )
+        if not isinstance(payload.get("peak_to_sidelobe_definition"), str):
+            raise MatlabResultError(
+                "MATLAB sidelobe metric definition is missing or invalid.",
+                task_id=expected_task_id,
+                run_dir=run_dir,
+            )
+        for name in ("matlab_version", "matlab_release", "matlab_arch", "rng_algorithm"):
+            if not isinstance(payload.get(name), str) or not payload[name]:
+                raise MatlabResultError(
+                    f"MATLAB runtime metadata field {name} is missing or invalid.",
+                    task_id=expected_task_id,
+                    run_dir=run_dir,
+                )
+        random_seed = payload.get("random_seed")
+        if isinstance(random_seed, bool) or not isinstance(random_seed, int):
+            raise MatlabResultError(
+                "MATLAB runtime metadata field random_seed must be an integer.",
+                task_id=expected_task_id,
+                run_dir=run_dir,
+            )
     return payload
 
 
@@ -183,6 +304,47 @@ def _validate_vector(
     ):
         raise MatlabResultError(
             f"MATLAB result field {name} must be finite numeric.",
+            task_id=task_id,
+            run_dir=run_dir,
+        )
+
+
+def _validate_vector_collection(
+    value: Any,
+    name: str,
+    count: int,
+    *,
+    task_id: str,
+    run_dir: Path,
+) -> None:
+    values = [value] if count == 1 and isinstance(value, list) and len(value) == 3 else value
+    if not isinstance(values, list) or len(values) != count:
+        raise MatlabResultError(
+            f"MATLAB result field {name} must contain {count} vectors.",
+            task_id=task_id,
+            run_dir=run_dir,
+        )
+    for vector in values:
+        _validate_vector(vector, name, task_id=task_id, run_dir=run_dir)
+
+
+def _validate_numeric_collection(
+    value: Any,
+    name: str,
+    count: int,
+    *,
+    task_id: str,
+    run_dir: Path,
+) -> None:
+    values = value if isinstance(value, list) else [value]
+    if len(values) != count or any(
+        isinstance(item, bool)
+        or not isinstance(item, (int, float))
+        or not math.isfinite(float(item))
+        for item in values
+    ):
+        raise MatlabResultError(
+            f"MATLAB result field {name} must contain {count} finite numbers.",
             task_id=task_id,
             run_dir=run_dir,
         )

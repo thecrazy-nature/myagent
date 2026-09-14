@@ -38,6 +38,18 @@ class MatlabBridgeInputTests(unittest.TestCase):
         with self.assertRaises(InvalidSimulationInput):
             run_simulation([0, 0, 100], task_id="CON")
 
+    def test_rejects_non_square_element_count_before_matlab(self) -> None:
+        with patch("bridge.matlab_bridge.subprocess.run") as run:
+            with self.assertRaises(InvalidSimulationInput):
+                run_simulation([0, 0, 100], element_count=96)
+            run.assert_not_called()
+
+    def test_rejects_more_than_eight_users_before_matlab(self) -> None:
+        with patch("bridge.matlab_bridge.subprocess.run") as run:
+            with self.assertRaises(InvalidSimulationInput):
+                run_simulation([0, 0, 100], additional_targets_mm=[[0, 0, 100]] * 8)
+            run.assert_not_called()
+
     def test_windows_launcher_resolution_is_stable(self) -> None:
         resolved = _prefer_windows_launcher("matlab")
         self.assertIsInstance(resolved, str)

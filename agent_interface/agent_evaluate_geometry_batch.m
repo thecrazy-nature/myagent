@@ -24,6 +24,10 @@ try
         end
     end
     batch_id = string(config.batch_id);
+    random_seed = 0;
+    if isfield(config, 'random_seed'), random_seed = double(config.random_seed); end
+    validateattributes(random_seed, {'numeric'}, {'scalar', 'integer', 'nonnegative'});
+    rng(random_seed, 'twister');
     interface_root = fileparts(mfilename('fullpath'));
     project_root = fileparts(interface_root);
     addpath(fullfile(project_root, 'matlab_core'), '-begin');
@@ -31,6 +35,10 @@ try
     results = evaluate_array_geometry_batch_core(config);
     payload = struct('status', "success", 'batch_id', batch_id, ...
         'design_task_id', string(config.design_task_id), 'results', results, ...
+        'matlab_version', string(version), ...
+        'matlab_release', string(version('-release')), ...
+        'matlab_arch', string(computer('arch')), ...
+        'random_seed', random_seed, 'rng_algorithm', "twister", ...
         'runtime_sec', toc(started));
 catch exception
     error_type = string(exception.identifier);

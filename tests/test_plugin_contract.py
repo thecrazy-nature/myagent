@@ -43,20 +43,30 @@ class PluginContractTests(unittest.TestCase):
         self.assertTrue(result["error"])
         self.assertEqual(result["error_type"], "KeyError")
 
+    def test_focus_schema_exposes_configurable_multi_user_scenario(self) -> None:
+        properties = self.plugin.CREATE_FOCUS_TASK_SCHEMA["parameters"]["properties"]
+        self.assertEqual(properties["element_count"]["enum"], [64, 144, 256, 400])
+        self.assertEqual(properties["additional_targets_mm"]["maxItems"], 7)
+        self.assertEqual(properties["modulation_frequency_mhz"]["default"], 200)
+        self.assertIn("rhcp", properties["polarization"]["enum"])
+
     def test_array_design_tools_have_bounded_deterministic_schemas(self) -> None:
         search = self.plugin.SEARCH_ARRAY_GEOMETRY_SCHEMA["parameters"]
         self.assertEqual(search["properties"]["geometry_family"]["enum"], ["spherical_cap"])
         self.assertIn("candidate_budget", search["required"])
         self.assertIn("seed", search["required"])
 
-    def test_all_nine_tools_register_without_removing_focus_tools(self) -> None:
+    def test_all_ten_tools_register_without_removing_focus_tools(self) -> None:
         registrations = []
         class Context:
             def register_tool(self, **kwargs):
                 registrations.append(kwargs["name"])
         self.plugin.register(Context())
-        self.assertEqual(len(registrations), 9)
-        self.assertTrue({"create_focus_task", "refine_focus", "create_array_design_task", "save_array_design"}.issubset(registrations))
+        self.assertEqual(len(registrations), 10)
+        self.assertTrue({
+            "create_focus_task", "get_focus_task_state", "refine_focus",
+            "create_array_design_task", "save_array_design",
+        }.issubset(registrations))
 
 
 if __name__ == "__main__":

@@ -58,5 +58,12 @@ def run_search(
         "matlab_process_count": 1,
         "batch_runtime_sec": batch["runtime_sec"],
         "end_to_end_runtime_sec": batch["end_to_end_runtime_sec"],
+        "matlab_environment": {
+            "version": batch["matlab_version"],
+            "release": batch["matlab_release"],
+            "architecture": batch["matlab_arch"],
+            "random_seed": batch["random_seed"],
+            "rng_algorithm": batch["rng_algorithm"],
+        },
         "candidates": candidates,
     }

@@ -26,15 +26,38 @@ EM_FOCUS_PING_SCHEMA = {
     },
 }
 
+GET_FOCUS_TASK_STATE_SCHEMA = {
+    "name": "get_focus_task_state",
+    "description": (
+        "Read a previously persisted focus-task checkpoint. Use this only when "
+        "recovering an interrupted Hermes session, then follow valid_next_actions; "
+        "never repeat a MATLAB run that is already recorded as simulated."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "agent_task_id": {
+                "type": "string",
+                "description": "Persisted focus task ID from the interrupted session.",
+            }
+        },
+        "required": ["agent_task_id"],
+        "additionalProperties": False,
+    },
+}
+
 CREATE_FOCUS_TASK_SCHEMA = {
     "name": "create_focus_task",
     "description": (
         "Call first to create and structure a new scientific near-field focusing "
-        "task. It records the researcher's immutable desired target and constraints, "
-        "plus the initial commanded target used by the workflow. Call it exactly "
+        "task. It records the researcher's immutable desired target(s), solver scenario, "
+        "and constraints, plus the initial commanded targets used by the workflow. Call it exactly "
         "once per requested task. Always provide target_mm, tolerance_mm, and "
-        "max_refinements. Copy user-stated constraints exactly; use the documented "
-        "defaults only when the user omitted them."
+        "max_refinements. For multiple users, put user 1 in target_mm and the rest "
+        "in additional_targets_mm. Copy user-stated constraints exactly; use documented "
+        "defaults when omitted. Every user is assigned to a different modulation-harmonic "
+        "order; never combine multiple users on q=0. Polarization is recorded as scenario metadata because "
+        "the current scalar point-source solver does not model polarization differences."
     ),
     "parameters": {
         "type": "object",
@@ -55,6 +78,45 @@ CREATE_FOCUS_TASK_SCHEMA = {
                 "default": 2,
                 "description": "Maximum number of feedback corrections allowed.",
             },
+            "additional_targets_mm": {
+                "type": "array",
+                "items": VECTOR_SCHEMA,
+                "maxItems": 7,
+                "default": [],
+                "description": "Optional desired focus points for users 2 through 8.",
+            },
+            "frequency_ghz": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 28,
+                "description": "Carrier frequency in GHz used by the real MATLAB solver.",
+            },
+            "modulation_frequency_mhz": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 1000,
+                "default": 200,
+                "description": (
+                    "TMA modulation frequency in MHz. Each user is assigned a distinct "
+                    "order q and is evaluated at carrier + q times this frequency."
+                ),
+            },
+            "element_count": {
+                "type": "integer",
+                "enum": [64, 144, 256, 400],
+                "default": 256,
+                "description": "Element count for a square planar array.",
+            },
+            "polarization": {
+                "type": "string",
+                "enum": ["scalar", "x_linear", "y_linear", "rhcp", "lhcp"],
+                "default": "scalar",
+                "description": (
+                    "Scenario label persisted with results. It does not alter fields in "
+                    "the current polarization-independent scalar point-source solver."
+                ),
+            },
         },
         "required": ["target_mm", "tolerance_mm", "max_refinements"],
         "additionalProperties": False,
@@ -65,8 +127,8 @@ RUN_FOCUS_SIMULATION_SCHEMA = {
     "name": "run_focus_simulation",
     "description": (
         "Call after create_focus_task or refine_focus to invoke the real MATLAB "
-        "electromagnetic solver and focusing algorithm for the current commanded "
-        "target. It executes exactly one experiment and returns measured numerical "
+        "electromagnetic solver and per-harmonic focusing algorithm for the current commanded "
+        "target(s). It executes exactly one experiment and returns measured numerical "
         "results. Always evaluate its result before starting another experiment."
     ),
     "parameters": {

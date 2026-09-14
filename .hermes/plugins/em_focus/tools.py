@@ -31,7 +31,20 @@ def create_focus_task(args: dict[str, Any], **kwargs: Any) -> str:
             args["target_mm"],
             args["tolerance_mm"],
             args["max_refinements"],
+            args.get("additional_targets_mm"),
+            args.get("frequency_ghz", 28.0),
+            args.get("modulation_frequency_mhz", 200.0),
+            args.get("element_count", 256),
+            args.get("polarization", "scalar"),
         ),
+    )
+
+
+def get_focus_task_state(args: dict[str, Any], **kwargs: Any) -> str:
+    """Load the last durable workflow checkpoint for interrupted-session recovery."""
+    del kwargs
+    return _invoke(
+        args, lambda: _agent_api().inspect_task(args.get("agent_task_id"))
     )
 
 

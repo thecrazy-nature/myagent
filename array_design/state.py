@@ -51,7 +51,7 @@ def create_design_task(
     run_dir.mkdir(parents=True, exist_ok=False)
     now = _now()
     state = {
-        "schema_version": 1,
+        "schema_version": 2,
         "design_task_id": design_task_id,
         "status": "created",
         "natural_language_request": None,
@@ -72,6 +72,7 @@ def create_design_task(
         "search_trajectory": [],
         "evaluated_geometries": {},
         "selected_design": None,
+        "matlab_environment": None,
         "created_at": now,
         "updated_at": now,
     }
@@ -96,6 +97,13 @@ def evaluate_geometry(
         state["roi_radius_mm"], state["roi_half_depth_mm"], [geometry],
     )
     metrics = batch["results"][0]
+    state["matlab_environment"] = {
+        "version": batch["matlab_version"],
+        "release": batch["matlab_release"],
+        "architecture": batch["matlab_arch"],
+        "random_seed": batch["random_seed"],
+        "rng_algorithm": batch["rng_algorithm"],
+    }
     record: dict[str, Any] = {"geometry": geometry, "metrics": metrics}
     if geometry_family == "baseline":
         scoring = score_metrics(metrics, metrics, state["objective_weights"], state["focus_tolerance_mm"])
@@ -140,6 +148,7 @@ def search_geometry(
     if candidate_budget > state["remaining_search_budget"]:
         raise InvalidArrayDesignInput("candidate_budget exceeds the task's remaining search budget.")
     result = run_search(run_dir, state, geometry_family, parameter_bounds, candidate_budget, seed)
+    state["matlab_environment"] = result["matlab_environment"]
     state["remaining_search_budget"] -= candidate_budget
     for candidate in result["candidates"]:
         geometry_id = candidate["geometry"]["geometry_id"]
@@ -227,6 +236,7 @@ def attach_agent_metadata(
     final_response: str,
     tool_trajectory: list[dict[str, Any]] | None = None,
     end_to_end_runtime_sec: float | None = None,
+    governance: dict[str, Any] | None = None,
 ) -> None:
     run_dir, state = _load_state(design_task_id)
     state["natural_language_request"] = request
@@ -234,6 +244,7 @@ def attach_agent_metadata(
     state["hermes_final_response"] = final_response
     state["hermes_tool_trajectory"] = tool_trajectory or []
     state["end_to_end_runtime_sec"] = end_to_end_runtime_sec
+    state["governance"] = governance
     _write_state(run_dir, state)
 
 

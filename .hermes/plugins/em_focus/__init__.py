@@ -8,6 +8,7 @@ from .schemas import (
     CREATE_ARRAY_DESIGN_TASK_SCHEMA,
     CREATE_FOCUS_TASK_SCHEMA,
     EM_FOCUS_PING_SCHEMA,
+    GET_FOCUS_TASK_STATE_SCHEMA,
     EVALUATE_FOCUS_SCHEMA,
     REFINE_FOCUS_SCHEMA,
     RUN_FOCUS_SIMULATION_SCHEMA,
@@ -19,6 +20,7 @@ from .tools import (
     create_array_design_task,
     create_focus_task,
     em_focus_ping,
+    get_focus_task_state,
     evaluate_focus,
     refine_focus,
     run_focus_simulation,
@@ -32,6 +34,7 @@ def register(ctx: Any) -> None:
     """Register the diagnostic and four formal task tools with Hermes."""
     registrations = (
         ("em_focus_ping", EM_FOCUS_PING_SCHEMA, em_focus_ping),
+        ("get_focus_task_state", GET_FOCUS_TASK_STATE_SCHEMA, get_focus_task_state),
         ("create_focus_task", CREATE_FOCUS_TASK_SCHEMA, create_focus_task),
         (
             "run_focus_simulation",

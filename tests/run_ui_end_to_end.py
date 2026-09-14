@@ -88,21 +88,21 @@ def main() -> int:
                 cdp.call("Runtime.enable")
                 _wait_expression(
                     cdp,
-                    "document.body && document.body.innerText.includes('Run Agent')",
+                    "document.body && document.body.innerText.includes('运行智能体')",
                     timeout_sec=30,
                 )
                 initial_text = cdp.evaluate("document.body.innerText")
                 evidence["natural_language_default_visible"] = (
-                    "Natural Language Task" in initial_text
-                    and "Natural Language Mode" in initial_text
+                    "告诉智能体你想完成什么" in initial_text
+                    and "当前模型参数与提示词写法" in initial_text
                 )
                 clicked = cdp.evaluate(
                     "(() => { const b=[...document.querySelectorAll('button')]"
-                    ".find(x => x.innerText.includes('Run Agent'));"
+                    ".find(x => x.innerText.includes('运行智能体'));"
                     "if (!b || b.disabled) return false; b.click(); return true; })()"
                 )
                 if clicked is not True:
-                    raise RuntimeError("Browser could not click the enabled Run Agent button.")
+                    raise RuntimeError("Browser could not click the enabled 运行智能体 button.")
                 evidence["browser_clicked_run_agent"] = True
                 _wait_for_ui_completion(cdp, evidence, timeout_sec=1020)
             _stop_process_tree(browser)
@@ -200,10 +200,10 @@ class CDP:
 
 def _wait_for_ui_completion(cdp: CDP, evidence: dict[str, Any], timeout_sec: int) -> None:
     statuses = [
-        "Initializing Hermes Agent", "Planning task", "Creating focusing task",
-        "Running MATLAB simulation", "MATLAB simulation completed",
-        "Evaluating structured MATLAB result", "Hermes selected workflow-level replanning",
-        "Agent Summary",
+        "正在初始化 Hermes 智能体", "正在理解自然语言任务", "正在创建聚焦任务",
+        "正在运行 MATLAB 聚焦仿真", "MATLAB 仿真已完成",
+        "正在评估 MATLAB 结构化结果", "Hermes 已选择进行工作流级修正",
+        "智能体总结",
     ]
     observed: set[str] = set()
     deadline = time.monotonic() + timeout_sec
@@ -213,8 +213,8 @@ def _wait_for_ui_completion(cdp: CDP, evidence: dict[str, Any], timeout_sec: int
             if status in body:
                 observed.add(status)
         evidence["observed_status_messages"] = sorted(observed)
-        if "Agent Summary" in body and (
-            "SUCCESS" in body or "CONSTRAINT NOT SATISFIED" in body or "Infrastructure Error" in body
+        if "智能体总结" in body and (
+            "成功" in body or "未满足科学约束" in body or "基础设施错误" in body
         ):
             evidence["browser_final_page_excerpt"] = body[-4000:]
             return

@@ -13,6 +13,7 @@ DOMAIN_TOOLS = {
     "run_focus_simulation",
     "evaluate_focus",
     "refine_focus",
+    "get_focus_task_state",
     "create_array_design_task",
     "evaluate_array_geometry",
     "search_array_geometry",
@@ -89,6 +90,8 @@ def build_task_view(
     state = _load_agent_state(project_root, agent_task_id)
     iterations = build_iteration_history(state)
     final_evaluation = _last_observation(trajectory, "evaluate_focus")
+    if final_evaluation is None and state:
+        final_evaluation = _latest_state_event(state, "evaluation")
     successful_run = _last_successful_run(trajectory)
     final_response = _final_response(session)
     error_category, error_message = classify_outcome(
@@ -131,7 +134,17 @@ def build_task_view(
         "error_message": error_message,
         "infrastructure_warnings": infrastructure_warnings,
         "desired_target_mm": desired,
+        "desired_targets_mm": (
+            state.get("desired_targets_mm") if state else [desired] if desired else None
+        ),
         "actual_peak_mm": actual,
+        "actual_peak_points_mm": (
+            final_evaluation.get("actual_peak_points_mm")
+            if isinstance(final_evaluation, dict)
+            else successful_run.get("actual_peak_points_mm")
+            if isinstance(successful_run, dict)
+            else None
+        ),
         "final_error_mm": final_error,
         "constraint_satisfied": (
             final_evaluation.get("success")
@@ -158,6 +171,29 @@ def build_task_view(
         ],
         "agent_final_response": final_response,
         "agent_state": state,
+    }
+
+
+def build_conversation_view(session: dict[str, Any]) -> dict[str, Any]:
+    """Build a successful chat turn when Hermes correctly needs no domain tool."""
+
+    response = _final_response(session)
+    if not response:
+        return {
+            "session_id": session.get("id"),
+            "status": "FAILED",
+            "error_category": "Agent Error",
+            "error_message": "Hermes 没有返回可显示的回复。",
+            "trajectory": [],
+            "agent_final_response": "",
+        }
+    return {
+        "session_id": session.get("id"),
+        "status": "SUCCESS",
+        "error_category": None,
+        "error_message": None,
+        "trajectory": [],
+        "agent_final_response": response,
     }
 
 
@@ -233,6 +269,29 @@ def load_recent_designs(project_root: Path, limit: int = 12) -> list[dict[str, A
     return designs
 
 
+def load_focus_task_record(project_root: Path, agent_task_id: str) -> dict[str, Any] | None:
+    """Load one persisted focus task for the read-only result viewer."""
+    state = _load_agent_state(project_root, agent_task_id)
+    if not state:
+        return None
+    metadata_path = project_root / "runs" / "agent_tasks" / agent_task_id / "ui_metadata.json"
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        metadata = {}
+    return {
+        "agent_task_id": agent_task_id,
+        "state": state,
+        "metadata": metadata,
+        "iterations": build_iteration_history(state),
+    }
+
+
+def load_array_design_record(project_root: Path, design_task_id: str) -> dict[str, Any] | None:
+    """Load one complete persisted array design for the read-only result viewer."""
+    return _load_design_state(project_root, design_task_id)
+
+
 def build_iteration_history(state: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not state:
         return []
@@ -255,6 +314,16 @@ def build_iteration_history(state: dict[str, Any] | None) -> list[dict[str, Any]
                 "Desired Target": event.get("desired_target_mm"),
                 "Commanded Target": event.get("commanded_target_mm"),
                 "Actual Peak": event.get("actual_peak_mm"),
+                "Desired Targets": event.get("desired_targets_mm"),
+                "Commanded Targets": event.get("commanded_targets_mm"),
+                "Actual Peaks": event.get("actual_peak_points_mm"),
+                "Per-user Errors / mm": evaluation.get("focus_errors_mm"),
+                "User Harmonic Orders": event.get("user_harmonic_orders"),
+                "FWHM X / mm": event.get("fwhm_x_mm_by_user"),
+                "DOF Z / mm": event.get("dof_z_mm_by_user"),
+                "Local Peak / Max Sidelobe / dB": event.get(
+                    "peak_to_sidelobe_ratio_db_by_user"
+                ),
                 "Error / mm": evaluation.get("focus_error_mm"),
                 "Result": (
                     "SUCCESS" if evaluation.get("success") is True
@@ -276,6 +345,14 @@ def classify_outcome(
 
     if not trajectory:
         return "Agent Error", "Hermes produced no electromagnetic domain Tool Call."
+    if state and state.get("status") == "focus_achieved":
+        sequence_error = _trajectory_error(trajectory)
+        return ("Agent Error", sequence_error) if sequence_error else (None, None)
+    if state and state.get("status") == "refinement_exhausted":
+        sequence_error = _trajectory_error(trajectory)
+        if sequence_error:
+            return "Agent Error", sequence_error
+        return "Scientific Failure", "Refinement budget exhausted and requested tolerance was not satisfied."
     if isinstance(final_evaluation, dict) and final_evaluation.get("success") is True:
         sequence_error = _trajectory_error(trajectory)
         if sequence_error:
@@ -336,6 +413,11 @@ def load_recent_tasks(project_root: Path, limit: int = 12) -> list[dict[str, Any
                 "original_task": metadata.get("original_task"),
                 "submission_mode": metadata.get("submission_mode"),
                 "desired_target_mm": state.get("desired_target_mm"),
+                "user_count": state.get("user_count", 1),
+                "frequency_hz": state.get("frequency_hz", 28.0e9),
+                "modulation_frequency_hz": state.get("modulation_frequency_hz", 200.0e6),
+                "element_count": state.get("element_count", 256),
+                "polarization": state.get("polarization", "scalar"),
                 "status": state.get("status"),
                 "final_error_mm": final_evaluation.get("focus_error_mm"),
                 "replanning_count": state.get("refinement_count", 0),
@@ -348,16 +430,33 @@ def load_recent_tasks(project_root: Path, limit: int = 12) -> list[dict[str, Any
 
 def _trajectory_error(trajectory: list[dict[str, Any]]) -> str | None:
     names = [call.get("tool_name") for call in trajectory]
-    if not names or names[0] != "create_focus_task" or names.count("create_focus_task") != 1:
-        return "Tool sequence must begin with exactly one create_focus_task call."
-    create_arguments = trajectory[0].get("arguments", {})
-    required = {"target_mm", "tolerance_mm", "max_refinements"}
-    if not required.issubset(create_arguments):
-        return "create_focus_task omitted target, tolerance, or refinement budget."
-    phase = "configured"
-    for call in trajectory[1:]:
+    if not names:
+        return "Focus workflow has no Tool Call."
+    if names[0] == "get_focus_task_state":
+        if names.count("create_focus_task"):
+            return "A recovery turn must not create a replacement focus task."
+        checkpoint = trajectory[0].get("observation")
+        status = checkpoint.get("status") if isinstance(checkpoint, dict) else None
+        phase = {
+            "configured": "configured", "refined": "refined",
+            "simulated": "simulated", "evaluation_failed": "evaluation_failed",
+            "focus_achieved": "terminal", "refinement_exhausted": "terminal",
+        }.get(status, "invalid_checkpoint")
+        remaining_calls = trajectory[1:]
+    else:
+        if names[0] != "create_focus_task" or names.count("create_focus_task") != 1:
+            return "Tool sequence must begin with exactly one create_focus_task call."
+        create_arguments = trajectory[0].get("arguments", {})
+        required = {"target_mm", "tolerance_mm", "max_refinements"}
+        if not required.issubset(create_arguments):
+            return "create_focus_task omitted target, tolerance, or refinement budget."
+        phase = "configured"
+        remaining_calls = trajectory[1:]
+    for call in remaining_calls:
         name = call.get("tool_name")
         observation = call.get("observation")
+        if name == "get_focus_task_state":
+            return "get_focus_task_state may only be called once at recovery start."
         if name == "run_focus_simulation":
             if phase not in {"configured", "refined"}:
                 return f"run_focus_simulation is invalid after phase {phase}."
@@ -419,6 +518,13 @@ def _last_observation(trajectory: list[dict[str, Any]], tool_name: str) -> dict[
     for call in reversed(trajectory):
         if call.get("tool_name") == tool_name and isinstance(call.get("observation"), dict):
             return call["observation"]
+    return None
+
+
+def _latest_state_event(state: dict[str, Any], event_name: str) -> dict[str, Any] | None:
+    for event in reversed(state.get("history", [])):
+        if isinstance(event, dict) and event.get("event") == event_name:
+            return event
     return None
 
 

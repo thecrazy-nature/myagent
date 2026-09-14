@@ -8,6 +8,8 @@ from pathlib import Path
 from app.view_models import (
     build_task_view,
     classify_outcome,
+    load_array_design_record,
+    load_focus_task_record,
     load_recent_tasks,
     parse_session_tool_calls,
     render_structured_task,
@@ -125,6 +127,19 @@ class UIViewModelTests(unittest.TestCase):
         }]
         self.assertEqual(classify_outcome(agent, None, None)[0], "Agent Error")
 
+    def test_recovery_trajectory_continues_from_persisted_phase(self) -> None:
+        trajectory = [{
+            "tool_name": "get_focus_task_state", "arguments": {"agent_task_id": "agent_x"},
+            "observation": {"agent_task_id": "agent_x", "status": "simulated"},
+        }, {
+            "tool_name": "evaluate_focus", "arguments": {"agent_task_id": "agent_x"},
+            "observation": {"success": True, "remaining_refinements": 1},
+        }]
+        self.assertEqual(
+            classify_outcome(trajectory, {"status": "focus_achieved"}, trajectory[-1]["observation"]),
+            (None, None),
+        )
+
     def test_recovered_matlab_error_does_not_override_later_success(self) -> None:
         trajectory = [{
             "tool_name": "create_focus_task",
@@ -159,6 +174,22 @@ class UIViewModelTests(unittest.TestCase):
             recent = load_recent_tasks(root)
         self.assertEqual(recent[0]["original_task"], "真实自然语言任务")
         self.assertEqual(recent[0]["agent_task_id"], "agent_recent")
+
+    def test_result_viewer_loaders_read_only_persisted_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            focus_dir = root / "runs" / "agent_tasks" / "agent_view"
+            focus_dir.mkdir(parents=True)
+            focus_state = {"agent_task_id": "agent_view", "history": []}
+            (focus_dir / "agent_state.json").write_text(json.dumps(focus_state), encoding="utf-8")
+            design_dir = root / "runs" / "array_designs" / "design_view"
+            design_dir.mkdir(parents=True)
+            design_state = {"design_task_id": "design_view", "selected_design": {}}
+            (design_dir / "design_state.json").write_text(json.dumps(design_state), encoding="utf-8")
+            focus = load_focus_task_record(root, "agent_view")
+            design = load_array_design_record(root, "design_view")
+        self.assertEqual(focus["state"]["agent_task_id"], "agent_view")
+        self.assertEqual(design["design_task_id"], "design_view")
 
 
 if __name__ == "__main__":

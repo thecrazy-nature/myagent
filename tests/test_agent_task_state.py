@@ -47,6 +47,7 @@ class AgentTaskStateTests(unittest.TestCase):
         loaded = load_task(created["agent_task_id"])
         self.assertEqual(loaded["desired_target_mm"], [0.0, 0.0, 100.0])
         self.assertEqual(loaded["current_command_target_mm"], [0.0, 0.0, 100.0])
+        self.assertEqual(loaded["user_harmonic_orders"], [0])
         state_path = (
             self.tasks_root / created["agent_task_id"] / "agent_state.json"
         )
@@ -108,6 +109,68 @@ class AgentTaskStateTests(unittest.TestCase):
             second = run_task_simulation(agent_task_id)
         self.assertNotEqual(first["simulation_run_id"], second["simulation_run_id"])
         self.assertNotEqual(agent_task_id, first["simulation_run_id"])
+
+    def test_multi_user_evaluation_uses_worst_error_and_preserves_scenario(self) -> None:
+        created = create_task(
+            [0, 0, 100],
+            tolerance_mm=5,
+            additional_targets_mm=[[20, 0, 90]],
+            frequency_ghz=39,
+            element_count=144,
+            polarization="rhcp",
+        )
+        agent_task_id = created["agent_task_id"]
+
+        def fake_run(**kwargs: object) -> dict[str, object]:
+            return {
+                "status": "success",
+                "task_id": kwargs["task_id"],
+                "requested_focus_mm": [0, 0, 100],
+                "actual_peak_mm": [0, 0, 98],
+                "requested_focus_points_mm": [[0, 0, 100], [20, 0, 90]],
+                "actual_peak_points_mm": [[0, 0, 98], [14, 0, 90]],
+                "peak_power": 12.5,
+                "peak_power_by_user": [12.5, 8.0],
+                "peak_power_definition": "test power",
+                "requested_power": 11.0,
+                "requested_power_by_user": [11.0, 7.5],
+                "runtime_sec": 0.75,
+            }
+
+        with patch("em_focus_agent.task_state.run_simulation", side_effect=fake_run) as run:
+            result = run_task_simulation(agent_task_id)
+        evaluated = evaluate_task(agent_task_id)
+        self.assertEqual(run.call_args.kwargs["frequency_hz"], 39e9)
+        self.assertEqual(result["user_count"], 2)
+        self.assertEqual(evaluated["focus_errors_mm"], [2.0, 6.0])
+        self.assertEqual(evaluated["focus_error_mm"], 6.0)
+        self.assertFalse(evaluated["success"])
+        refined = refine_task(agent_task_id)
+        self.assertAlmostEqual(refined["new_command_targets_mm"][0][2], 101.4)
+        self.assertAlmostEqual(refined["new_command_targets_mm"][1][0], 24.2)
+        persisted = load_task(agent_task_id)
+        self.assertEqual(persisted["desired_targets_mm"], [[0.0, 0.0, 100.0], [20.0, 0.0, 90.0]])
+        self.assertEqual(persisted["polarization"], "rhcp")
+        self.assertEqual(persisted["user_harmonic_orders"], [-1, 1])
+        self.assertEqual(persisted["harmonic_frequencies_hz"], [38.8e9, 39e9, 39.2e9])
+
+    def test_matlab_cannot_silently_collapse_multi_user_targets_to_q0(self) -> None:
+        created = create_task([0, 0, 100], additional_targets_mm=[[20, 0, 90]])
+
+        def fake_run(**kwargs: object) -> dict[str, object]:
+            result = matlab_result(str(kwargs["task_id"]), [0.0, 0.0, 100.0])
+            result.update({
+                "requested_focus_points_mm": [[0, 0, 100], [20, 0, 90]],
+                "actual_peak_points_mm": [[0, 0, 94.2], [20, 0, 90]],
+                "peak_power_by_user": [12.5, 10.0],
+                "requested_power_by_user": [11.0, 9.0],
+                "user_harmonic_orders": [0, 0],
+            })
+            return result
+
+        with patch("em_focus_agent.task_state.run_simulation", side_effect=fake_run):
+            with self.assertRaisesRegex(AgentTaskError, "harmonic mapping"):
+                run_task_simulation(created["agent_task_id"])
 
 
 if __name__ == "__main__":

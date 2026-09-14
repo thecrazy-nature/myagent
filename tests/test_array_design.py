@@ -78,6 +78,9 @@ class StateTests(unittest.TestCase):
                 def batch(run_dir, task_id, target, tolerance, roi_radius, roi_depth, geometries, timeout_sec=600):
                     return {"status": "success", "batch_id": "batch_test", "runtime_sec": 1.0,
                             "end_to_end_runtime_sec": 1.1,
+                            "matlab_version": "24.2", "matlab_release": "R2024b",
+                            "matlab_arch": "win64", "random_seed": 0,
+                            "rng_algorithm": "twister",
                             "results": [fake_metrics(item["geometry_id"], fwhm=9.0 if item["family"] == "spherical_cap" else 10.0)
                                         for item in geometries]}
 

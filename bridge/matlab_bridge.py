@@ -35,16 +35,33 @@ WINDOWS_RESERVED_NAMES = {
     *(f"COM{index}" for index in range(1, 10)),
     *(f"LPT{index}" for index in range(1, 10)),
 }
+DEFAULT_FREQUENCY_HZ = 28.0e9
+DEFAULT_MODULATION_FREQUENCY_HZ = 200.0e6
+DEFAULT_ELEMENT_COUNT = 256
+SUPPORTED_POLARIZATIONS = {"scalar", "x_linear", "y_linear", "rhcp", "lhcp"}
 
 
 def run_simulation(
     target_mm: Sequence[Real],
     task_id: str | None = None,
     timeout_sec: Real = 300,
+    *,
+    additional_targets_mm: Sequence[Sequence[Real]] | None = None,
+    frequency_hz: Real = DEFAULT_FREQUENCY_HZ,
+    modulation_frequency_hz: Real = DEFAULT_MODULATION_FREQUENCY_HZ,
+    element_count: int = DEFAULT_ELEMENT_COUNT,
+    polarization: str = "scalar",
 ) -> dict[str, Any]:
-    """Run one real MATLAB focus simulation and return validated JSON data."""
+    """Run one real MATLAB single- or multi-target focus simulation."""
 
     target = _validate_target(target_mm)
+    targets = [target, *_validate_additional_targets(additional_targets_mm)]
+    frequency = _validate_frequency(frequency_hz)
+    modulation_frequency = _validate_modulation_frequency(
+        modulation_frequency_hz, frequency
+    )
+    elements = _validate_element_count(element_count)
+    polarization_mode = _validate_polarization(polarization)
     resolved_task_id = _validate_or_create_task_id(task_id)
     timeout = _validate_timeout(timeout_sec)
 
@@ -70,7 +87,16 @@ def run_simulation(
     stderr_path = run_dir / "stderr.log"
     _write_json_atomic(
         config_path,
-        {"task_id": resolved_task_id, "target_mm": target},
+        {
+            "task_id": resolved_task_id,
+            "target_mm": target,
+            "targets_mm": targets,
+            "frequency_hz": frequency,
+            "modulation_frequency_hz": modulation_frequency,
+            "element_count": elements,
+            "polarization": polarization_mode,
+            "random_seed": 0,
+        },
     )
 
     try:
@@ -206,6 +232,62 @@ def _validate_target(target_mm: Sequence[Real]) -> list[float]:
             raise InvalidSimulationInput("target_mm values must be finite.")
         target.append(converted)
     return target
+
+
+def _validate_additional_targets(
+    targets_mm: Sequence[Sequence[Real]] | None,
+) -> list[list[float]]:
+    if targets_mm is None:
+        return []
+    if isinstance(targets_mm, (str, bytes)) or not isinstance(targets_mm, Sequence):
+        raise InvalidSimulationInput("additional_targets_mm must be a sequence of [x,y,z] targets.")
+    if len(targets_mm) > 7:
+        raise InvalidSimulationInput("At most 8 simultaneous focus targets are supported.")
+    return [_validate_target(target) for target in targets_mm]
+
+
+def _validate_frequency(frequency_hz: Real) -> float:
+    if isinstance(frequency_hz, bool) or not isinstance(frequency_hz, Real):
+        raise InvalidSimulationInput("frequency_hz must be a finite number from 1 to 100 GHz.")
+    frequency = float(frequency_hz)
+    if not math.isfinite(frequency) or not 1.0e9 <= frequency <= 100.0e9:
+        raise InvalidSimulationInput("frequency_hz must be between 1 and 100 GHz.")
+    return frequency
+
+
+def _validate_modulation_frequency(value: Real, carrier_hz: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise InvalidSimulationInput(
+            "modulation_frequency_hz must be a positive finite number."
+        )
+    frequency = float(value)
+    if not math.isfinite(frequency) or frequency <= 0 or frequency >= carrier_hz:
+        raise InvalidSimulationInput(
+            "modulation_frequency_hz must be positive and below the carrier frequency."
+        )
+    return frequency
+
+
+def _validate_element_count(element_count: int) -> int:
+    if isinstance(element_count, bool) or not isinstance(element_count, int):
+        raise InvalidSimulationInput("element_count must be a perfect-square integer.")
+    side = math.isqrt(element_count)
+    if side * side != element_count or not 4 <= side <= 32:
+        raise InvalidSimulationInput(
+            "element_count must describe a square 4x4 to 32x32 planar array."
+        )
+    return element_count
+
+
+def _validate_polarization(polarization: str) -> str:
+    if not isinstance(polarization, str):
+        raise InvalidSimulationInput("polarization must be a string.")
+    normalized = polarization.strip().lower()
+    if normalized not in SUPPORTED_POLARIZATIONS:
+        raise InvalidSimulationInput(
+            "polarization must be scalar, x_linear, y_linear, rhcp, or lhcp."
+        )
+    return normalized
 
 
 def _validate_or_create_task_id(task_id: str | None) -> str:

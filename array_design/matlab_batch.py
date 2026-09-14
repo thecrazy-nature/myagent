@@ -38,7 +38,7 @@ def evaluate_batch(
     stdout_path = batch_dir / "stdout.log"
     stderr_path = batch_dir / "stderr.log"
     config = {
-        "schema_version": 1,
+        "schema_version": 2,
         "batch_id": batch_id,
         "design_task_id": design_task_id,
         "target_mm": target_mm,
@@ -46,6 +46,7 @@ def evaluate_batch(
         "roi_radius_mm": roi_radius_mm,
         "roi_half_depth_mm": roi_half_depth_mm,
         "geometries": geometries,
+        "random_seed": int(geometries[0].get("seed", 0)) if geometries else 0,
     }
     _write_json_atomic(config_path, config)
     executable = _resolve_matlab_executable()
@@ -103,6 +104,10 @@ def _validate_batch_result(payload: Any, batch_id: str, geometry_ids: list[str])
     if not isinstance(payload, dict) or payload.get("status") != "success" or payload.get("batch_id") != batch_id:
         message = payload.get("message") if isinstance(payload, dict) else "malformed payload"
         raise ArrayDesignMatlabError(f"MATLAB geometry batch failed: {message}")
+    if not all(isinstance(payload.get(name), str) and payload.get(name) for name in (
+        "matlab_version", "matlab_release", "matlab_arch", "rng_algorithm"
+    )) or not isinstance(payload.get("random_seed"), int):
+        raise ArrayDesignMatlabError("MATLAB geometry batch runtime metadata is missing.")
     results = payload.get("results")
     if not isinstance(results, list) or [item.get("geometry_id") for item in results if isinstance(item, dict)] != geometry_ids:
         raise ArrayDesignMatlabError("MATLAB geometry result list does not match the submitted batch.")
