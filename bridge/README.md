@@ -61,5 +61,5 @@ py -3.13 demo_bridge.py
 py -3.13 -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-Python 版本为 3.13.5，没有新增第三方依赖。完整真实验收见
-`bridge/GATE3_REPORT.md`。
+Python 版本为 3.13.5，没有新增第三方依赖。真实验收记录保存在本地，
+不随公开源码仓库发布。

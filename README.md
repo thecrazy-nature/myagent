@@ -125,8 +125,8 @@ The search tool batches all candidates from one deterministic coarse grid into
 one dedicated MATLAB `-batch` process; it does not ask the LLM to guess element
 coordinates.
 
-The real Stage A/B evidence and DESIGN-A–L checklist are in
-[docs/ARRAY_DESIGN_VALIDATION_REPORT.md](docs/ARRAY_DESIGN_VALIDATION_REPORT.md).
+Array-design evidence and exploratory reports are generated locally and are not
+published with the source repository.
 
 ## Running the Interactive App
 
@@ -322,9 +322,8 @@ from bridge import run_simulation
 result = run_simulation([0.0, 0.0, 100.0])
 ```
 
-Each invocation creates an isolated `runs/<task_id>/` record. See
-[bridge/README.md](bridge/README.md) and
-[bridge/GATE3_REPORT.md](bridge/GATE3_REPORT.md).
+Each invocation creates an isolated local `runs/<task_id>/` record. See
+[bridge/README.md](bridge/README.md).
 
 ## Hermes development proxy
 
@@ -383,10 +382,9 @@ budget, stop-logic, and trajectory-parser checks should remain deterministic
 unit/workflow tests. Only explicitly labelled end-to-end runs use real Hermes
 and MATLAB; mock output must never be reported as an end-to-end result.
 
-The full 12-task suite has not been executed. A four-task A01/B01/C01/D01
-smoke run is retained under `benchmark/smoke_results.*`; full benchmark
-execution is intentionally paused while the interactive application is the
-active development target.
+The full 12-task suite has not been executed. Benchmark results and traces are
+kept locally and ignored by Git; mock output must never be presented as an
+end-to-end result.
 
 ## Scope and physical model
 
@@ -464,18 +462,15 @@ Run the three external cold-start `matlab -batch` cases on Windows:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "F:\hermes-em-agent\tests\run_batch_end_to_end.ps1" -MatlabExecutable "F:\matlab\bin\matlab.exe" -ProjectRoot "F:\hermes-em-agent"
 ```
 
-See [AUDIT_REPORT.md](AUDIT_REPORT.md) for the source audit, numerical
-comparison, exclusions, and gate status. See
-[matlab_core/DEPENDENCIES.md](matlab_core/DEPENDENCIES.md) for the exact runtime
-closure. The command-line-interface evidence is in
-[agent_interface/VALIDATION_REPORT.md](agent_interface/VALIDATION_REPORT.md).
+See [matlab_core/DEPENDENCIES.md](matlab_core/DEPENDENCIES.md) for the exact
+runtime closure.
 
-## Presentation
+## Repository privacy
 
-The editable Chinese mentor presentation and its evidence-backed figures are in
-[`docs/presentation/`](docs/presentation/). The deck covers the application's
-purpose, architecture, Agent/MATLAB responsibility boundary, multi-harmonic
-workflow, interface, validation evidence, limitations, and research roadmap.
+The public repository contains source code, tests, configuration examples, and
+README-style usage documentation. Local experiment records under `runs/`,
+benchmark result traces, research reports and presentations under `docs/`, and
+credential files are intentionally excluded by `.gitignore`.
 
 ## Future work
 
@@ -483,6 +478,3 @@ If multiple stable MATLAB methods are added later, Hermes may select a method
 and orchestrate structured comparisons. The current project deliberately keeps
 the one verified focusing method and does not reintroduce unvalidated legacy
 methods merely to broaden the Agent interface.
-
-For a concise résumé/project-description version, see
-[docs/PROJECT_DESCRIPTION.md](docs/PROJECT_DESCRIPTION.md).

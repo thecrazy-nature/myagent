@@ -14,9 +14,19 @@ venv/
 *.p12
 *.pfx
 
-# Ephemeral UI jobs and local verification runs.
-runs/ui_jobs/
-runs/verify_harmonics_*/
-
-# Locally rendered slide previews; the editable PPTX/PDF remain versioned.
-docs/presentation/preview/
+# Local research evidence, reports, presentations, and runtime artifacts.
+# Keep these on the workstation; the public repository contains code and READMEs.
+/docs/
+/runs/
+/AUDIT_REPORT.md
+/agent_interface/VALIDATION_REPORT.md
+/bridge/GATE3_REPORT.md
+/benchmark/smoke_results.csv
+/benchmark/smoke_results.json
+/benchmark/smoke_summary.md
+/benchmark/traces/
+*.ppt
+*.pptx
+*.pdf
+*.doc
+*.docx
