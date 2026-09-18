@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-import os
 import json
+import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
-from app.agent_runner import AgentRunnerError, build_hermes_command, check_proxy, detect_task_kind
+from app.agent_runner import (
+    AgentRunnerError,
+    build_hermes_command,
+    detect_task_kind,
+    read_hermes_default_model,
+)
 
 
 def tool_call(call_id: str, name: str) -> list[dict]:
@@ -39,6 +43,12 @@ class UIAgentRunnerTests(unittest.TestCase):
         session = {"messages": tool_call("design", "create_array_design_task")}
         self.assertEqual(detect_task_kind(session), "array_design")
 
+    def test_detects_metasurface_design_from_actual_tool_calls(self) -> None:
+        session = {
+            "messages": tool_call("metasurface", "create_metasurface_design_task")
+        }
+        self.assertEqual(detect_task_kind(session), "metasurface_design")
+
     def test_rejects_mixed_numerical_workflows(self) -> None:
         session = {
             "messages": tool_call("focus", "create_focus_task")
@@ -68,30 +78,27 @@ class UIAgentRunnerTests(unittest.TestCase):
         )
         self.assertEqual(command[command.index("--resume") + 1], "session_123")
 
-    def test_proxy_requires_process_variables(self) -> None:
-        clean_environment = {
-            key: value for key, value in os.environ.items()
-            if key not in {"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"}
-        }
-        with patch.dict(os.environ, clean_environment, clear=True):
-            result = check_proxy()
-        self.assertFalse(result.available)
-        self.assertIn("HTTP_PROXY", result.message)
+    def test_command_can_override_model_and_provider(self) -> None:
+        command = build_hermes_command(
+            Path("C:/hermes/python.exe"),
+            Path("C:/temp/task.txt"),
+            "ui_source",
+            900,
+            model="deepseek-v4-flash",
+            provider="deepseek",
+        )
+        self.assertEqual(command[command.index("--model") + 1], "deepseek-v4-flash")
+        self.assertEqual(command[command.index("--provider") + 1], "deepseek")
 
-    def test_proxy_checks_local_clash_socket(self) -> None:
-        environment = {
-            "HTTP_PROXY": "http://127.0.0.1:7897",
-            "HTTPS_PROXY": "http://127.0.0.1:7897",
-            "NO_PROXY": "localhost,127.0.0.1,::1",
-        }
-        connection = unittest.mock.MagicMock()
-        connection.__enter__.return_value = connection
-        with (
-            patch.dict(os.environ, environment, clear=True),
-            patch("app.agent_runner.socket.create_connection", return_value=connection),
-        ):
-            result = check_proxy()
-        self.assertTrue(result.available)
+    def test_reads_non_secret_default_model_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "config.yaml"
+            config.write_text(
+                "model:\n  default: deepseek-v4-flash\n  provider: deepseek\napi_key: secret\n",
+                encoding="utf-8",
+            )
+            selected = read_hermes_default_model(config)
+        self.assertEqual(selected, {"model": "deepseek-v4-flash", "provider": "deepseek"})
 
 
 if __name__ == "__main__":

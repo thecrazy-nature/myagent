@@ -25,10 +25,17 @@ class JobWorkerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "ui_jobs"
             with patch("app.job_store.JOBS_ROOT", root):
-                job = create_job("hello", conversation_id="conversation_one")
+                job = create_job(
+                    "hello",
+                    conversation_id="conversation_one",
+                    model_override="deepseek-v4-flash",
+                    provider_override="deepseek",
+                )
                 claimed = claim_next_job(4321)
+                invocation = {}
 
                 def fake_run(*args, **kwargs):
+                    invocation.update(kwargs)
                     kwargs["on_status"](StatusUpdate(
                         "checkpoint", "checkpoint saved",
                         {"session_id": "session_one", "agent_task_id": "agent_one"},
@@ -47,6 +54,8 @@ class JobWorkerTests(unittest.TestCase):
                 self.assertEqual(stored["status"], "completed")
                 self.assertEqual(stored["agent_task_id"], "agent_one")
                 self.assertTrue(stored["notification_pending"])
+                self.assertEqual(invocation["model"], "deepseek-v4-flash")
+                self.assertEqual(invocation["provider"], "deepseek")
 
 
 if __name__ == "__main__":

@@ -1,11 +1,18 @@
 function baseline_path = generate_original_baseline(original_root, output_path)
 %GENERATE_ORIGINAL_BASELINE Run the read-only source project reference chain.
 
-arguments
-    original_root (1, 1) string = "F:\matlabcode\multiuser"
-    output_path (1, 1) string = fullfile(fileparts(fileparts( ...
-        mfilename('fullpath'))), 'runs', 'original_baseline.mat')
+if nargin < 1 || strlength(string(original_root)) == 0
+    original_root = string(getenv('HERMES_REFERENCE_PROJECT_ROOT'));
 end
+if nargin < 2 || strlength(string(output_path)) == 0
+    output_path = fullfile(fileparts(fileparts( ...
+        mfilename('fullpath'))), 'runs', 'original_baseline.mat');
+end
+original_root = string(original_root);
+output_path = string(output_path);
+assert(strlength(original_root) > 0, ...
+    ['Pass the source-project folder as the first argument or set the ' ...
+    'process-local HERMES_REFERENCE_PROJECT_ROOT environment variable.']);
 assert(isfile(fullfile(original_root, 'run_multiuser.m')), ...
     'Original project root is invalid: %s', original_root);
 

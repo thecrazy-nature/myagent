@@ -302,3 +302,211 @@ SAVE_ARRAY_DESIGN_SCHEMA = {
         "additionalProperties": False,
     },
 }
+
+METASURFACE_OBJECTIVE_WEIGHTS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "focus_accuracy": {"type": "number", "exclusiveMinimum": 0},
+        "sidelobe_suppression": {"type": "number", "exclusiveMinimum": 0},
+        "energy_concentration": {"type": "number", "exclusiveMinimum": 0},
+    },
+    "required": ["focus_accuracy", "energy_concentration", "sidelobe_suppression"],
+    "additionalProperties": False,
+}
+
+CREATE_METASURFACE_DESIGN_TASK_SCHEMA = {
+    "name": "create_metasurface_design_task",
+    "description": (
+        "Call exactly once for a planar 0/1 transmissive programmable-metasurface focusing "
+        "request. It freezes frequency, cell dimensions, rectangular array size, plane-wave "
+        "or horn phase-center illumination, the two measured/assumed complex transmission "
+        "states, the single desired focus and the bounded candidate budget. It only creates "
+        "state; all electromagnetic numbers must come from the later real MATLAB tools."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "focus_target_mm": {
+                **VECTOR_SCHEMA,
+                "description": "Immutable single desired [x,y,z] focus in mm above z=0.",
+            },
+            "focus_tolerance_mm": {
+                "type": "number", "exclusiveMinimum": 0,
+                "description": "Hard maximum focus-location error in mm.",
+            },
+            "frequency_ghz": {
+                "type": "number", "minimum": 1, "maximum": 100,
+                "description": "Carrier frequency used by the real MATLAB model.",
+            },
+            "unit_size_mm": {
+                "type": "array", "items": {"type": "number", "exclusiveMinimum": 0},
+                "minItems": 3, "maxItems": 3,
+                "description": "Cell [dx,dy,dz] dimensions in mm. These do not define a physical CST stack-up.",
+            },
+            "array_size": {
+                "type": "array",
+                "items": {"type": "integer", "minimum": 4, "maximum": 40},
+                "minItems": 2, "maxItems": 2,
+                "description": "Planar [cells_x,cells_y], with at most 1600 cells.",
+            },
+            "incident_wave": {
+                "type": "string", "enum": ["plane_wave", "horn_spherical_wave"],
+            },
+            "horn_feed_position_mm": {
+                **VECTOR_SCHEMA,
+                "description": "Horn phase center [x,y,z] mm with z<0; ignored for plane_wave.",
+            },
+            "binary_states": {
+                "type": "object",
+                "properties": {
+                    "state_0": {
+                        "type": "object",
+                        "properties": {
+                            "amplitude": {"type": "number", "minimum": 0, "maximum": 1},
+                            "phase_deg": {"type": "number"},
+                        },
+                        "required": ["amplitude", "phase_deg"],
+                        "additionalProperties": False,
+                    },
+                    "state_1": {
+                        "type": "object",
+                        "properties": {
+                            "amplitude": {"type": "number", "minimum": 0, "maximum": 1},
+                            "phase_deg": {"type": "number"},
+                        },
+                        "required": ["amplitude", "phase_deg"],
+                        "additionalProperties": False,
+                    },
+                },
+                "required": ["state_0", "state_1"],
+                "additionalProperties": False,
+                "description": "0/1 complex transmission coefficients; amplitude is linear voltage magnitude.",
+            },
+            "candidate_budget": {
+                "type": "integer", "minimum": 1, "maximum": 8,
+                "description": "Maximum programmable candidates after the two baselines.",
+            },
+            "objective_weights": {
+                **METASURFACE_OBJECTIVE_WEIGHTS_SCHEMA,
+                "description": "Positive priorities normalized by deterministic scoring.",
+            },
+            "evaluation_policy": {
+                "type": "string", "enum": ["record_only"], "default": "record_only",
+                "description": "Records indicators without inventing an acceptance threshold.",
+            },
+            "roi_radius_mm": {
+                "type": "number", "exclusiveMinimum": 0, "default": 15,
+            },
+            "roi_half_depth_mm": {
+                "type": "number", "exclusiveMinimum": 0, "default": 20,
+            },
+        },
+        "required": [
+            "focus_target_mm", "focus_tolerance_mm", "frequency_ghz",
+            "unit_size_mm", "array_size", "incident_wave", "horn_feed_position_mm",
+            "binary_states", "candidate_budget", "objective_weights", "evaluation_policy",
+        ],
+        "additionalProperties": False,
+    },
+}
+
+EVALUATE_METASURFACE_BASELINE_SCHEMA = {
+    "name": "evaluate_metasurface_baseline",
+    "description": (
+        "Call immediately after creation. One real MATLAB process evaluates the unprogrammed "
+        "surface, the ideal continuous phase-conjugate reference, and the 0/1 geometrical-optics "
+        "code. The geometrical-optics result is the before-optimization baseline. The continuous "
+        "reference is not realizable 1-bit hardware and only bounds target-point power."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"metasurface_task_id": {"type": "string"}},
+        "required": ["metasurface_task_id"],
+        "additionalProperties": False,
+    },
+}
+
+OPTIMIZE_METASURFACE_CANDIDATE_SCHEMA = {
+    "name": "optimize_metasurface_candidate",
+    "description": (
+        "After baseline evaluation, ask real MATLAB to improve one binary 0/1 transmission-code map. "
+        "The current candidate engine is deterministic binary coordinate descent initialized by "
+        "the geometrical-optics code. Hermes chooses only the registered optimizer, a small "
+        "iteration bound, and guard_weight; Hermes never invents element codes. "
+        "guard_weight=0 emphasizes focal power, while larger values trade power for suppression "
+        "at documented lateral/axial guard samples."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "metasurface_task_id": {"type": "string"},
+            "optimizer": {"type": "string", "enum": ["binary_coordinate_descent_v1"]},
+            "max_iterations": {"type": "integer", "minimum": 1, "maximum": 8},
+            "guard_weight": {"type": "number", "minimum": 0, "maximum": 2},
+            "seed": {"type": "integer", "minimum": 0, "default": 0},
+        },
+        "required": [
+            "metasurface_task_id", "optimizer", "max_iterations",
+            "guard_weight", "seed",
+        ],
+        "additionalProperties": False,
+    },
+}
+
+EVALUATE_METASURFACE_DESIGN_SCHEMA = {
+    "name": "evaluate_metasurface_design",
+    "description": (
+        "Record MATLAB-derived focus, energy-concentration, sidelobe, and transmission indicators "
+        "for one optimized candidate. The only current policy is record_only: overall_pass remains "
+        "null until the researcher chooses and versions a scientific acceptance rule."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "metasurface_task_id": {"type": "string"},
+            "candidate_id": {"type": "string"},
+            "evaluation_policy": {"type": "string", "enum": ["record_only"]},
+        },
+        "required": ["metasurface_task_id", "candidate_id", "evaluation_policy"],
+        "additionalProperties": False,
+    },
+}
+
+SAVE_METASURFACE_DESIGN_SCHEMA = {
+    "name": "save_metasurface_design",
+    "description": (
+        "Persist one assessed binary candidate and its full control-code map. Under the current "
+        "record_only policy this is a research draft pending a researcher-defined acceptance "
+        "threshold; never claim that the candidate passed an undefined criterion."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "metasurface_task_id": {"type": "string"},
+            "candidate_id": {"type": "string"},
+            "selection_reason": {"type": "string", "minLength": 1},
+        },
+        "required": ["metasurface_task_id", "candidate_id", "selection_reason"],
+        "additionalProperties": False,
+    },
+}
+
+BUILD_METASURFACE_CST_MODEL_SCHEMA = {
+    "name": "build_metasurface_cst_model",
+    "description": (
+        "After saving, ask MATLAB to generate a CST 2025 VBA history and optionally launch CST via "
+        "OLE automation. It creates a labeled binary control-code layout only. It is not a full-wave "
+        "unit-cell model because materials, stack-up, ports, boundaries and S-parameter calibration "
+        "have not been specified."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "metasurface_task_id": {"type": "string"},
+            "launch_cst": {"type": "boolean"},
+            "model_kind": {"type": "string", "enum": ["layout_scaffold"]},
+        },
+        "required": ["metasurface_task_id", "launch_cst", "model_kind"],
+        "additionalProperties": False,
+    },
+}

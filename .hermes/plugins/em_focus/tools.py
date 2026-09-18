@@ -106,6 +106,62 @@ def save_array_design(args: dict[str, Any], **kwargs: Any) -> str:
     ))
 
 
+def create_metasurface_design_task(args: dict[str, Any], **kwargs: Any) -> str:
+    """Create a persistent fixed-planar programmable-surface design task."""
+    del kwargs
+    return _invoke(args, lambda: _metasurface_api().create_design_task(
+        args["focus_target_mm"], args["focus_tolerance_mm"],
+        args["frequency_ghz"], args["unit_size_mm"], args["array_size"],
+        args["incident_wave"], args["horn_feed_position_mm"], args["binary_states"],
+        args["candidate_budget"], args["objective_weights"], args["evaluation_policy"],
+        args.get("roi_radius_mm", 15.0),
+        args.get("roi_half_depth_mm", 20.0),
+    ))
+
+
+def evaluate_metasurface_baseline(args: dict[str, Any], **kwargs: Any) -> str:
+    """Evaluate unprogrammed and ideal continuous references in real MATLAB."""
+    del kwargs
+    return _invoke(args, lambda: _metasurface_api().evaluate_baseline(
+        args["metasurface_task_id"]
+    ))
+
+
+def optimize_metasurface_candidate(args: dict[str, Any], **kwargs: Any) -> str:
+    """Design one binary transmission map in real MATLAB."""
+    del kwargs
+    return _invoke(args, lambda: _metasurface_api().optimize_candidate(
+        args["metasurface_task_id"], args["optimizer"],
+        args["max_iterations"], args["guard_weight"], args["seed"],
+    ))
+
+
+def evaluate_metasurface_design(args: dict[str, Any], **kwargs: Any) -> str:
+    """Record evidence without fabricating a scientific acceptance threshold."""
+    del kwargs
+    return _invoke(args, lambda: _metasurface_api().evaluate_design(
+        args["metasurface_task_id"], args["candidate_id"],
+        args["evaluation_policy"],
+    ))
+
+
+def save_metasurface_design(args: dict[str, Any], **kwargs: Any) -> str:
+    """Persist one evaluated programmable metasurface and its control codes."""
+    del kwargs
+    return _invoke(args, lambda: _metasurface_api().save_design(
+        args["metasurface_task_id"], args["candidate_id"],
+        args["selection_reason"],
+    ))
+
+
+def build_metasurface_cst_model(args: dict[str, Any], **kwargs: Any) -> str:
+    """Generate a CST layout scaffold through real MATLAB and optional OLE automation."""
+    del kwargs
+    return _invoke(args, lambda: _metasurface_api().build_cst_model(
+        args["metasurface_task_id"], args["launch_cst"], args["model_kind"],
+    ))
+
+
 def _invoke(args: dict[str, Any], operation: Callable[[], dict[str, Any]]) -> str:
     try:
         return _json(operation())
@@ -125,11 +181,20 @@ def _error_json(exception: Exception, args: Any) -> str:
     if isinstance(candidate_from_exception, str):
         agent_task_id = candidate_from_exception
     if agent_task_id is None and isinstance(args, dict):
-        candidate = args.get("agent_task_id") or args.get("design_task_id")
+        candidate = (
+            args.get("agent_task_id")
+            or args.get("design_task_id")
+            or args.get("metasurface_task_id")
+        )
         if isinstance(candidate, str):
             agent_task_id = candidate
     if agent_task_id is not None:
-        key = "design_task_id" if agent_task_id.startswith("design_") else "agent_task_id"
+        if agent_task_id.startswith("metasurface_"):
+            key = "metasurface_task_id"
+        elif agent_task_id.startswith("design_"):
+            key = "design_task_id"
+        else:
+            key = "agent_task_id"
         result[key] = agent_task_id
     simulation_run_id = getattr(exception, "task_id", None)
     if isinstance(simulation_run_id, str) and simulation_run_id.startswith("sim_"):
@@ -158,3 +223,12 @@ def _array_api() -> Any:
     import array_design
 
     return array_design
+
+
+def _metasurface_api() -> Any:
+    project_root = str(PROJECT_ROOT)
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    import metasurface_design
+
+    return metasurface_design

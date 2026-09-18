@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+/dist/
+/app-settings.local.json
 
 # Local credentials and provider configuration (the GitHub repository is public).
 .env

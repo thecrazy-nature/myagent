@@ -18,12 +18,22 @@ DOMAIN_TOOLS = {
     "evaluate_array_geometry",
     "search_array_geometry",
     "save_array_design",
+    "create_metasurface_design_task",
+    "evaluate_metasurface_baseline",
+    "optimize_metasurface_candidate",
+    "evaluate_metasurface_design",
+    "save_metasurface_design",
+    "build_metasurface_cst_model",
 }
 INFRASTRUCTURE_ERROR_TYPES = {
     "MatlabExecutableNotFound",
     "MatlabProcessError",
     "MatlabResultError",
     "MatlabTimeoutError",
+}
+INPUT_ERROR_IDENTIFIERS = {
+    "hermes:TargetOutOfRange",
+    "hermes:TargetOutOfPlane",
 }
 
 
@@ -215,7 +225,10 @@ def build_array_design_view(session: dict[str, Any], project_root: Path) -> dict
         if isinstance(call.get("observation"), dict) and call["observation"].get("error") is True
     ]
     if errors:
-        category = "Infrastructure Error" if str(errors[-1].get("error_type", "")).startswith("Matlab") or "Matlab" in str(errors[-1].get("error_type", "")) else "Agent Error"
+        category = _tool_error_category(
+            str(errors[-1].get("error_type", "")),
+            str(errors[-1].get("message", "")),
+        )
         message = str(errors[-1].get("message", "Array-design Tool failed."))
         status = "FAILED"
     elif selected:
@@ -245,6 +258,76 @@ def build_array_design_view(session: dict[str, Any], project_root: Path) -> dict
     }
 
 
+def build_metasurface_design_view(
+    session: dict[str, Any], project_root: Path
+) -> dict[str, Any]:
+    """Combine Hermes decisions with persisted real-MATLAB metasurface evidence."""
+
+    trajectory = parse_session_tool_calls(session)
+    metasurface_task_id = None
+    for call in trajectory:
+        observation = call.get("observation")
+        if isinstance(observation, dict) and isinstance(
+            observation.get("metasurface_task_id"), str
+        ):
+            metasurface_task_id = observation["metasurface_task_id"]
+            break
+    state = _load_metasurface_state(project_root, metasurface_task_id)
+    selected = state.get("selected_design") if state else None
+    errors = [
+        call["observation"]
+        for call in trajectory
+        if isinstance(call.get("observation"), dict)
+        and call["observation"].get("error") is True
+    ]
+    if errors:
+        category = _tool_error_category(
+            str(errors[-1].get("error_type", "")),
+            str(errors[-1].get("message", "")),
+        )
+        message = str(errors[-1].get("message", "Metasurface Tool failed."))
+        status = "FAILED"
+    elif selected:
+        category, message, status = None, None, "SAVED"
+    else:
+        category = "Agent Error"
+        message = "Hermes stopped before save_metasurface_design persisted a final phase map."
+        status = "FAILED"
+    return {
+        "session_id": session.get("id"),
+        "metasurface_task_id": metasurface_task_id,
+        "status": status,
+        "error_category": category,
+        "error_message": message,
+        "trajectory": trajectory,
+        "agent_final_response": _final_response(session),
+        "metasurface_state": state,
+        "unprogrammed_reference": (
+            state.get("unprogrammed_reference") if state else None
+        ),
+        "continuous_reference": (
+            state.get("continuous_reference") if state else None
+        ),
+        "geometrical_optics_baseline": (
+            state.get("geometrical_optics_baseline") if state else None
+        ),
+        "selected_design": selected,
+        "cst_model": state.get("cst_model") if state else None,
+        "candidate_evaluations": sum(
+            call.get("tool_name") == "optimize_metasurface_candidate"
+            for call in trajectory
+        ),
+        "matlab_processes": sum(
+            call.get("tool_name")
+            in {
+                "evaluate_metasurface_baseline", "optimize_metasurface_candidate",
+                "build_metasurface_cst_model",
+            }
+            for call in trajectory
+        ),
+    }
+
+
 def load_recent_designs(project_root: Path, limit: int = 12) -> list[dict[str, Any]]:
     root = project_root / "runs" / "array_designs"
     if not root.is_dir():
@@ -264,6 +347,42 @@ def load_recent_designs(project_root: Path, limit: int = 12) -> list[dict[str, A
             "status": state.get("status"),
             "selected_family": (selected.get("geometry") or {}).get("family"),
             "objective_score": selected.get("objective_score"),
+            "timestamp": state.get("updated_at"),
+        })
+    return designs
+
+
+def load_recent_metasurface_designs(
+    project_root: Path, limit: int = 12
+) -> list[dict[str, Any]]:
+    root = project_root / "runs" / "metasurface_designs"
+    if not root.is_dir():
+        return []
+    paths = sorted(
+        root.glob("metasurface_*/design_summary.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    designs: list[dict[str, Any]] = []
+    for path in paths[:limit]:
+        try:
+            state = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        designs.append({
+            "metasurface_task_id": state.get("metasurface_task_id"),
+            "focus_target_mm": state.get("focus_target_mm"),
+            "frequency_ghz": state.get("frequency_ghz"),
+            "element_count": state.get("element_count"),
+            "array_size": state.get("array_size"),
+            "incident_wave": state.get("incident_wave"),
+            "optimizer": state.get("optimizer"),
+            "focus_error_mm": state.get("focus_error_mm"),
+            "hard_focus_constraint_satisfied": state.get(
+                "hard_focus_constraint_satisfied"
+            ),
+            "criteria_status": state.get("criteria_status"),
+            "status": state.get("status"),
             "timestamp": state.get("updated_at"),
         })
     return designs
@@ -290,6 +409,12 @@ def load_focus_task_record(project_root: Path, agent_task_id: str) -> dict[str, 
 def load_array_design_record(project_root: Path, design_task_id: str) -> dict[str, Any] | None:
     """Load one complete persisted array design for the read-only result viewer."""
     return _load_design_state(project_root, design_task_id)
+
+
+def load_metasurface_design_record(
+    project_root: Path, metasurface_task_id: str
+) -> dict[str, Any] | None:
+    return _load_metasurface_state(project_root, metasurface_task_id)
 
 
 def build_iteration_history(state: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -364,9 +489,7 @@ def classify_outcome(
             continue
         error_type = str(observation.get("error_type", ""))
         message = str(observation.get("message", "Tool execution failed."))
-        if error_type in INFRASTRUCTURE_ERROR_TYPES or error_type.startswith("Matlab"):
-            return "Infrastructure Error", message
-        return "Agent Error", message
+        return _tool_error_category(error_type, message), message
     sequence_error = _trajectory_error(trajectory)
     if sequence_error:
         return "Agent Error", sequence_error
@@ -378,8 +501,19 @@ def classify_outcome(
                     "Scientific Failure",
                     "Refinement budget exhausted and requested tolerance was not satisfied.",
                 )
-            return "Agent Error", "Hermes stopped while refinement budget remained."
-    return "Agent Error", "Hermes stopped before a terminal focus evaluation."
+            return "Agent Error", "Hermes 在仍有修正预算时提前停止；可从任务中心继续该会话。"
+    return "Agent Error", "Hermes 在得到终态聚焦评估前提前停止。"
+
+
+def _tool_error_category(error_type: str, message: str) -> str:
+    if any(
+        identifier in error_type or identifier in message
+        for identifier in INPUT_ERROR_IDENTIFIERS
+    ):
+        return "Input Error"
+    if error_type in INFRASTRUCTURE_ERROR_TYPES or error_type.startswith("Matlab"):
+        return "Infrastructure Error"
+    return "Agent Error"
 
 
 def load_recent_tasks(project_root: Path, limit: int = 12) -> list[dict[str, Any]]:
@@ -507,6 +641,22 @@ def _load_design_state(project_root: Path, design_task_id: str | None) -> dict[s
     if not design_task_id:
         return None
     path = project_root / "runs" / "array_designs" / design_task_id / "design_state.json"
+    try:
+        state = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return state if isinstance(state, dict) else None
+
+
+def _load_metasurface_state(
+    project_root: Path, metasurface_task_id: str | None
+) -> dict[str, Any] | None:
+    if not metasurface_task_id:
+        return None
+    path = (
+        project_root / "runs" / "metasurface_designs"
+        / metasurface_task_id / "design_state.json"
+    )
     try:
         state = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeError, json.JSONDecodeError):

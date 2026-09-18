@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import socket
 import sqlite3
 import subprocess
 import tempfile
@@ -19,6 +18,7 @@ from typing import Any, Callable
 from .view_models import (
     build_array_design_view,
     build_conversation_view,
+    build_metasurface_design_view,
     build_task_view,
     parse_session_tool_calls,
 )
@@ -31,8 +31,6 @@ from .run_governance import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_PROXY = "http://127.0.0.1:7897"
-EXPECTED_NO_PROXY = "localhost,127.0.0.1,::1"
 
 
 @dataclass(frozen=True)
@@ -42,12 +40,6 @@ class StatusUpdate:
     details: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class ProxyCheck:
-    available: bool
-    message: str
-
-
 class AgentRunnerError(RuntimeError):
     def __init__(
         self, category: str, message: str, *, session_id: str | None = None
@@ -55,23 +47,6 @@ class AgentRunnerError(RuntimeError):
         super().__init__(message)
         self.category = category
         self.session_id = session_id
-
-
-def check_proxy(timeout_sec: float = 1.0) -> ProxyCheck:
-    expected = {
-        "HTTP_PROXY": EXPECTED_PROXY,
-        "HTTPS_PROXY": EXPECTED_PROXY,
-        "NO_PROXY": EXPECTED_NO_PROXY,
-    }
-    wrong = [name for name, value in expected.items() if os.environ.get(name) != value]
-    if wrong:
-        return ProxyCheck(False, "当前进程缺少或错误设置了代理变量：" + ", ".join(wrong))
-    try:
-        with socket.create_connection(("127.0.0.1", 7897), timeout=timeout_sec):
-            pass
-    except OSError as exception:
-        return ProxyCheck(False, f"无法连接 Clash 代理 127.0.0.1:7897：{exception}")
-    return ProxyCheck(True, "Hermes 网络代理 127.0.0.1:7897 可用。")
 
 
 def locate_hermes_python() -> Path:
@@ -98,12 +73,56 @@ def locate_hermes_home() -> Path:
     return (Path(local_app_data) / "hermes").resolve()
 
 
+def read_hermes_default_model(config_path: Path | None = None) -> dict[str, str | None]:
+    """Read the non-secret default model fields from Hermes' YAML configuration."""
+
+    result: dict[str, str | None] = {"model": None, "provider": None}
+    try:
+        path = config_path or (locate_hermes_home() / "config.yaml")
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeError, AgentRunnerError):
+        return result
+
+    in_model_section = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 0:
+            in_model_section = stripped == "model:"
+            continue
+        if not in_model_section or ":" not in stripped:
+            continue
+        key, value = stripped.split(":", 1)
+        key = key.strip()
+        if key not in {"default", "provider"}:
+            continue
+        cleaned = value.strip().strip("'\"")
+        if cleaned and cleaned.lower() not in {"null", "none", "~"}:
+            result["model" if key == "default" else "provider"] = cleaned
+    return result
+
+
+def _validate_cli_override(value: str | None, name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise AgentRunnerError("Agent Error", f"{name} 必须是字符串。")
+    cleaned = value.strip()
+    if not cleaned or len(cleaned) > 200 or any(ord(character) < 32 for character in cleaned):
+        raise AgentRunnerError("Agent Error", f"{name} 无效。")
+    return cleaned
+
+
 def build_hermes_command(
     hermes_python: Path,
     prompt_path: Path,
     source: str,
     run_budget_sec: int,
     resume_session_id: str | None = None,
+    model: str | None = None,
+    provider: str | None = None,
 ) -> list[str]:
     command = [
         str(hermes_python),
@@ -125,6 +144,12 @@ def build_hermes_command(
         "--run-budget",
         str(run_budget_sec),
     ]
+    selected_model = _validate_cli_override(model, "model")
+    selected_provider = _validate_cli_override(provider, "provider")
+    if selected_model:
+        command.extend(["--model", selected_model])
+    if selected_provider:
+        command.extend(["--provider", selected_provider])
     if resume_session_id:
         command.extend(["--resume", resume_session_id])
     return command
@@ -140,18 +165,13 @@ def run_agent_task(
     resume_session_id: str | None = None,
     control: Callable[[subprocess.Popen[str], str | None, float], None] | None = None,
     submission_governance: dict[str, Any] | None = None,
+    model: str | None = None,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Submit unparsed natural language to Hermes and return its observable result."""
 
     if not isinstance(task_text, str) or not task_text.strip():
         raise AgentRunnerError("Agent Error", "智能体任务文本不能为空。")
-    proxy = check_proxy()
-    if not proxy.available:
-        raise AgentRunnerError(
-            "Infrastructure Error",
-            "Hermes 网络代理不可用。请启动 Clash，并运行 .\\proxy-on.ps1。"
-            + proxy.message,
-        )
     hermes_python = locate_hermes_python()
     hermes_home = locate_hermes_home()
     database_path = hermes_home / "state.db"
@@ -176,7 +196,13 @@ def run_agent_task(
     environment = os.environ.copy()
     environment["HERMES_ENABLE_PROJECT_PLUGINS"] = "true"
     command = build_hermes_command(
-        hermes_python, prompt_path, source, run_budget_sec, resume_session_id
+        hermes_python,
+        prompt_path,
+        source,
+        run_budget_sec,
+        resume_session_id=resume_session_id,
+        model=model,
+        provider=provider,
     )
     started = time.perf_counter()
     process: subprocess.Popen[str] | None = None
@@ -259,6 +285,8 @@ def run_agent_task(
     resolved_task_kind = detect_task_kind(turn_session) if task_kind == "auto" else task_kind
     if resolved_task_kind == "array_design":
         view = build_array_design_view(turn_session, PROJECT_ROOT)
+    elif resolved_task_kind == "metasurface_design":
+        view = build_metasurface_design_view(turn_session, PROJECT_ROOT)
     elif resolved_task_kind == "focus":
         view = build_task_view(turn_session, PROJECT_ROOT)
     elif resolved_task_kind == "conversation":
@@ -303,17 +331,24 @@ def detect_task_kind(session: dict[str, Any]) -> str:
         "create_array_design_task", "evaluate_array_geometry",
         "search_array_geometry", "save_array_design",
     }
+    metasurface_tools = {
+        "create_metasurface_design_task", "evaluate_metasurface_baseline",
+        "optimize_metasurface_candidate", "evaluate_metasurface_design",
+        "save_metasurface_design", "build_metasurface_cst_model",
+    }
     kinds = set()
     if any(call.get("tool_name") in focus_tools for call in trajectory):
         kinds.add("focus")
     if any(call.get("tool_name") in design_tools for call in trajectory):
         kinds.add("array_design")
+    if any(call.get("tool_name") in metasurface_tools for call in trajectory):
+        kinds.add("metasurface_design")
     if len(kinds) == 1:
         return kinds.pop()
     if len(kinds) > 1:
         raise AgentRunnerError(
             "Agent Error",
-            "Hermes 在一次请求中混用了聚焦和阵列设计工作流；两类数值任务必须保持独立。",
+            "Hermes 在一次请求中混用了不同数值工作流；聚焦、阵列几何和可编程超表面任务必须保持独立。",
         )
     return "conversation"
 
@@ -334,25 +369,42 @@ def _emit_observed_progress(
         "evaluate_array_geometry": ("matlab", "正在使用真实 MATLAB 评估阵列几何……"),
         "search_array_geometry": ("searching", "正在一个 MATLAB 批次中评估确定性候选……"),
         "save_array_design": ("saving", "正在保存选定阵列和完整证据……"),
+        "create_metasurface_design_task": ("creating", "正在创建平面可编程超表面设计任务……"),
+        "evaluate_metasurface_baseline": ("matlab", "正在用真实 MATLAB 评估未编程、连续相位与几何光学 0/1 基线……"),
+        "optimize_metasurface_candidate": ("searching", "MATLAB 正在优化 0/1 透射控制码……"),
+        "evaluate_metasurface_design": ("evaluating", "正在记录聚焦、能量集中度、旁瓣和透射指标……"),
+        "save_metasurface_design": ("saving", "正在保存超表面相位码和基线对比证据……"),
+        "build_metasurface_cst_model": ("matlab", "MATLAB 正在生成并调动 CST 控制码布局模型……"),
     }
     for call in trajectory:
         call_id = str(call.get("call_id"))
         tool_name = str(call.get("tool_name"))
         if call_id not in observed_calls:
-            stage, message = call_messages[tool_name]
+            stage, message = call_messages.get(
+                tool_name, ("tool", f"Hermes 正在调用工具 {tool_name}……")
+            )
             _emit(callback, stage, message)
             observed_calls.add(call_id)
         observation = call.get("observation")
         if call_id in observed_results or not isinstance(observation, dict):
             continue
         observed_results.add(call_id)
-        checkpoint_id = observation.get("agent_task_id")
+        checkpoint_key = next(
+            (
+                key for key in (
+                    "agent_task_id", "design_task_id", "metasurface_task_id"
+                )
+                if isinstance(observation.get(key), str)
+            ),
+            None,
+        )
+        checkpoint_id = observation.get(checkpoint_key) if checkpoint_key else None
         if isinstance(checkpoint_id, str):
             _emit(
                 callback,
                 "checkpoint",
                 f"已记录可恢复检查点：{checkpoint_id}",
-                {"agent_task_id": checkpoint_id},
+                {checkpoint_key: checkpoint_id},
             )
         if observation.get("error") is True:
             _emit(callback, "tool_error", f"工具 {tool_name} 返回错误。")
@@ -447,6 +499,20 @@ def _write_prompt_file(task_text: str) -> Path:
 
 
 def _write_ui_metadata(view: dict[str, Any], source: str) -> None:
+    if view.get("task_kind") == "metasurface_design":
+        metasurface_task_id = view.get("metasurface_task_id")
+        if isinstance(metasurface_task_id, str):
+            from metasurface_design.state import attach_agent_metadata
+            attach_agent_metadata(
+                metasurface_task_id,
+                str(view.get("submitted_task", "")),
+                str(view.get("session_id", "")),
+                str(view.get("agent_final_response", "")),
+                view.get("trajectory") if isinstance(view.get("trajectory"), list) else [],
+                float(view["end_to_end_runtime_sec"]) if isinstance(view.get("end_to_end_runtime_sec"), (int, float)) else None,
+                view.get("governance") if isinstance(view.get("governance"), dict) else None,
+            )
+        return
     if view.get("task_kind") == "array_design":
         design_task_id = view.get("design_task_id")
         if isinstance(design_task_id, str):

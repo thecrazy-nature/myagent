@@ -25,6 +25,7 @@ def matlab_result(task_id: str, commanded: list[float]) -> dict[str, object]:
         "peak_power": 12.5,
         "peak_power_definition": "test power",
         "requested_power": 11.0,
+        "orthogonal_plane_resolution": 101,
         "runtime_sec": 0.75,
     }
 
@@ -61,7 +62,8 @@ class AgentTaskStateTests(unittest.TestCase):
             return matlab_result(task_id, list(target_mm))
 
         with patch("em_focus_agent.task_state.run_simulation", side_effect=fake_run):
-            run_task_simulation(agent_task_id)
+            simulated = run_task_simulation(agent_task_id)
+        self.assertEqual(simulated["orthogonal_plane_resolution"], 101)
         evaluated = evaluate_task(agent_task_id)
         self.assertAlmostEqual(evaluated["focus_error_mm"], 5.8)
         self.assertFalse(evaluated["success"])

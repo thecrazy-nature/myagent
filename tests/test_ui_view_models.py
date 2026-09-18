@@ -10,6 +10,8 @@ from app.view_models import (
     classify_outcome,
     load_array_design_record,
     load_focus_task_record,
+    load_metasurface_design_record,
+    load_recent_metasurface_designs,
     load_recent_tasks,
     parse_session_tool_calls,
     render_structured_task,
@@ -105,6 +107,18 @@ class UIViewModelTests(unittest.TestCase):
             "observation": {"error": True, "error_type": "MatlabProcessError", "message": "crash"},
         }]
         self.assertEqual(classify_outcome(infrastructure, None, None)[0], "Infrastructure Error")
+        invalid_target = [{
+            "tool_name": "run_focus_simulation", "arguments": {},
+            "observation": {
+                "error": True,
+                "error_type": "MatlabSimulationError",
+                "message": (
+                    "MATLAB simulation failed (hermes:TargetOutOfRange): "
+                    "Every target must satisfy z in [300, 840] mm."
+                ),
+            },
+        }]
+        self.assertEqual(classify_outcome(invalid_target, None, None)[0], "Input Error")
         scientific_trajectory = [{
             "tool_name": "create_focus_task",
             "arguments": {"target_mm": [0, 0, 100], "tolerance_mm": 0.1, "max_refinements": 1},
@@ -139,6 +153,29 @@ class UIViewModelTests(unittest.TestCase):
             classify_outcome(trajectory, {"status": "focus_achieved"}, trajectory[-1]["observation"]),
             (None, None),
         )
+
+    def test_early_stop_with_budget_has_actionable_chinese_message(self) -> None:
+        trajectory = [{
+            "tool_name": "create_focus_task",
+            "arguments": {"target_mm": [0, 0, 100], "tolerance_mm": 5, "max_refinements": 2},
+            "observation": {"agent_task_id": "agent_x"},
+        }, {
+            "tool_name": "run_focus_simulation",
+            "arguments": {"agent_task_id": "agent_x"},
+            "observation": {"success": True},
+        }, {
+            "tool_name": "evaluate_focus",
+            "arguments": {"agent_task_id": "agent_x"},
+            "observation": {"success": False, "remaining_refinements": 2},
+        }]
+        category, message = classify_outcome(
+            trajectory,
+            {"status": "evaluation_failed"},
+            trajectory[-1]["observation"],
+        )
+        self.assertEqual(category, "Agent Error")
+        self.assertIn("仍有修正预算时提前停止", message)
+        self.assertIn("任务中心", message)
 
     def test_recovered_matlab_error_does_not_override_later_success(self) -> None:
         trajectory = [{
@@ -186,10 +223,34 @@ class UIViewModelTests(unittest.TestCase):
             design_dir.mkdir(parents=True)
             design_state = {"design_task_id": "design_view", "selected_design": {}}
             (design_dir / "design_state.json").write_text(json.dumps(design_state), encoding="utf-8")
+            metasurface_dir = root / "runs" / "metasurface_designs" / "metasurface_view"
+            metasurface_dir.mkdir(parents=True)
+            metasurface_state = {
+                "metasurface_task_id": "metasurface_view",
+                "selected_design": {"configuration": {"optimizer": "binary_coordinate_descent_v1"}},
+            }
+            (metasurface_dir / "design_state.json").write_text(
+                json.dumps(metasurface_state), encoding="utf-8"
+            )
+            (metasurface_dir / "design_summary.json").write_text(
+                json.dumps({
+                    "metasurface_task_id": "metasurface_view",
+                    "focus_target_mm": [0, 0, 100],
+                    "array_size": [16, 16],
+                    "optimizer": "binary_coordinate_descent_v1",
+                    "status": "saved",
+                    "updated_at": "2026-01-01T00:00:00+00:00",
+                }),
+                encoding="utf-8",
+            )
             focus = load_focus_task_record(root, "agent_view")
             design = load_array_design_record(root, "design_view")
+            metasurface = load_metasurface_design_record(root, "metasurface_view")
+            recent_metasurfaces = load_recent_metasurface_designs(root)
         self.assertEqual(focus["state"]["agent_task_id"], "agent_view")
         self.assertEqual(design["design_task_id"], "design_view")
+        self.assertEqual(metasurface["metasurface_task_id"], "metasurface_view")
+        self.assertEqual(recent_metasurfaces[0]["array_size"], [16, 16])
 
 
 if __name__ == "__main__":

@@ -15,6 +15,12 @@ from .schemas import (
     EVALUATE_ARRAY_GEOMETRY_SCHEMA,
     SEARCH_ARRAY_GEOMETRY_SCHEMA,
     SAVE_ARRAY_DESIGN_SCHEMA,
+    CREATE_METASURFACE_DESIGN_TASK_SCHEMA,
+    EVALUATE_METASURFACE_BASELINE_SCHEMA,
+    OPTIMIZE_METASURFACE_CANDIDATE_SCHEMA,
+    EVALUATE_METASURFACE_DESIGN_SCHEMA,
+    SAVE_METASURFACE_DESIGN_SCHEMA,
+    BUILD_METASURFACE_CST_MODEL_SCHEMA,
 )
 from .tools import (
     create_array_design_task,
@@ -27,11 +33,17 @@ from .tools import (
     evaluate_array_geometry,
     search_array_geometry,
     save_array_design,
+    create_metasurface_design_task,
+    evaluate_metasurface_baseline,
+    optimize_metasurface_candidate,
+    evaluate_metasurface_design,
+    save_metasurface_design,
+    build_metasurface_cst_model,
 )
 
 
 def register(ctx: Any) -> None:
-    """Register the diagnostic and four formal task tools with Hermes."""
+    """Register the diagnostic and all domain workflow tools with Hermes."""
     registrations = (
         ("em_focus_ping", EM_FOCUS_PING_SCHEMA, em_focus_ping),
         ("get_focus_task_state", GET_FOCUS_TASK_STATE_SCHEMA, get_focus_task_state),
@@ -47,6 +59,36 @@ def register(ctx: Any) -> None:
         ("evaluate_array_geometry", EVALUATE_ARRAY_GEOMETRY_SCHEMA, evaluate_array_geometry),
         ("search_array_geometry", SEARCH_ARRAY_GEOMETRY_SCHEMA, search_array_geometry),
         ("save_array_design", SAVE_ARRAY_DESIGN_SCHEMA, save_array_design),
+        (
+            "create_metasurface_design_task",
+            CREATE_METASURFACE_DESIGN_TASK_SCHEMA,
+            create_metasurface_design_task,
+        ),
+        (
+            "evaluate_metasurface_baseline",
+            EVALUATE_METASURFACE_BASELINE_SCHEMA,
+            evaluate_metasurface_baseline,
+        ),
+        (
+            "optimize_metasurface_candidate",
+            OPTIMIZE_METASURFACE_CANDIDATE_SCHEMA,
+            optimize_metasurface_candidate,
+        ),
+        (
+            "evaluate_metasurface_design",
+            EVALUATE_METASURFACE_DESIGN_SCHEMA,
+            evaluate_metasurface_design,
+        ),
+        (
+            "save_metasurface_design",
+            SAVE_METASURFACE_DESIGN_SCHEMA,
+            save_metasurface_design,
+        ),
+        (
+            "build_metasurface_cst_model",
+            BUILD_METASURFACE_CST_MODEL_SCHEMA,
+            build_metasurface_cst_model,
+        ),
     )
     for name, schema, handler in registrations:
         ctx.register_tool(

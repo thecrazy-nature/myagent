@@ -6,6 +6,7 @@ import io
 import json
 import math
 import zipfile
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +40,23 @@ def load_field_data(project_root: Path, simulation: dict[str, Any]) -> dict[str,
     if path is None:
         return None
     try:
-        value = json.loads(path.read_text(encoding="utf-8-sig"))
+        stat = path.stat()
+        return _load_field_json_cached(
+            str(path), stat.st_mtime_ns, stat.st_size
+        )
+    except OSError:
+        return None
+
+
+@lru_cache(maxsize=32)
+def _load_field_json_cached(
+    path_text: str, modified_ns: int, size_bytes: int
+) -> dict[str, Any] | None:
+    """Cache immutable-by-contract field JSON using its file identity."""
+
+    del modified_ns, size_bytes
+    try:
+        value = json.loads(Path(path_text).read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
     return value if _valid_field_data(value) else None
@@ -55,6 +72,12 @@ def build_method_card(state: dict[str, Any], simulation: dict[str, Any]) -> list
         0,
         int(state.get("max_refinements", 0)) - int(state.get("refinement_count", 0)),
     )
+    field_scope = (
+        "在每个用户对应的独立谐波通道上进行 axial-null 近场复权重综合，"
+        "并计算真实 XOZ/YOZ 主切面及实际焦点深度处的 XOY 切面。"
+        if simulation.get("orthogonal_plane_resolution")
+        else "在每个用户对应的独立谐波通道上进行 axial-null 近场复权重综合，并计算真实 XOZ 场矩阵。"
+    )
     return [
         {
             "部分": "Hermes 智能体",
@@ -66,7 +89,7 @@ def build_method_card(state: dict[str, Any], simulation: dict[str, Any]) -> list
         },
         {
             "部分": "MATLAB 数值核心",
-            "本次职责": "在每个用户对应的独立谐波通道上进行 axial-null 近场复权重综合，并计算真实 XZ 场矩阵。",
+            "本次职责": field_scope,
         },
         {
             "部分": "多用户频率计划",
@@ -111,6 +134,27 @@ def field_frame(field_data: dict[str, Any], user_index: int, local_radius_mm: fl
     })
 
 
+def orthogonal_field_frame(
+    field_data: dict[str, Any], user_index: int, plane: str
+) -> pd.DataFrame:
+    """Return a true MATLAB YZ or XY focal cut as a plotting table."""
+
+    horizontal, vertical, power = _orthogonal_field_arrays(
+        field_data, user_index, plane
+    )
+    horizontal_grid, vertical_grid = np.meshgrid(horizontal, vertical)
+    db = 10.0 * np.log10(np.maximum(power, np.finfo(float).tiny))
+    if plane == "yz":
+        columns = {"Y／mm": horizontal_grid.ravel(), "Z／mm": vertical_grid.ravel()}
+    elif plane == "xy":
+        columns = {"X／mm": horizontal_grid.ravel(), "Y／mm": vertical_grid.ravel()}
+    else:
+        raise ValueError("plane must be 'yz' or 'xy'")
+    columns["归一化功率"] = power.ravel()
+    columns["相对功率／dB"] = np.maximum(db.ravel(), -60.0)
+    return pd.DataFrame(columns)
+
+
 def profile_frames(field_data: dict[str, Any], user_index: int) -> tuple[pd.DataFrame, pd.DataFrame]:
     x, z, power = _field_arrays(field_data, user_index)
     actual = np.asarray(field_data["actual_peak_points_mm"][user_index], dtype=float)
@@ -121,26 +165,186 @@ def profile_frames(field_data: dict[str, Any], user_index: int) -> tuple[pd.Data
     return lateral, axial
 
 
-def field_png(field_data: dict[str, Any], user_index: int) -> bytes:
-    x, z, power = _field_arrays(field_data, user_index)
-    target = field_data["requested_focus_points_mm"][user_index]
-    actual = field_data["actual_peak_points_mm"][user_index]
-    db = np.maximum(10.0 * np.log10(np.maximum(power, np.finfo(float).tiny)), -30.0)
-    figure = Figure(figsize=(8, 5), dpi=150, constrained_layout=True)
+def plane_png(
+    field_data: dict[str, Any],
+    user_index: int,
+    plane: str,
+    *,
+    local_radius_mm: float | None = None,
+    dynamic_range_db: float = 12.0,
+) -> bytes:
+    """Render one MATLAB field plane without sending a long table to the browser."""
+
+    if not 3 <= float(dynamic_range_db) <= 80:
+        raise ValueError("dynamic_range_db must be between 3 and 80")
+    if local_radius_mm is not None and float(local_radius_mm) <= 0:
+        raise ValueError("local_radius_mm must be positive")
+
+    target = np.asarray(
+        field_data["requested_focus_points_mm"][user_index], dtype=float
+    )
+    actual = np.asarray(
+        field_data["actual_peak_points_mm"][user_index], dtype=float
+    )
+    if plane == "xz":
+        horizontal, vertical, power = _field_arrays(field_data, user_index)
+        horizontal_label, vertical_label = "X / mm", "Z / mm"
+        center = actual[[0, 2]]
+        markers = [(target[[0, 2]], "Target", "x", "white")]
+        markers.append((actual[[0, 2]], "Measured peak", "+", "black"))
+    elif plane == "yz":
+        horizontal, vertical, power = _orthogonal_field_arrays(
+            field_data, user_index, plane
+        )
+        horizontal_label, vertical_label = "Y / mm", "Z / mm"
+        center = actual[[1, 2]]
+        fixed_x = float(field_data["yz_plane_x_mm_by_user"][user_index])
+        markers = []
+        if math.isclose(float(target[0]), fixed_x, abs_tol=1e-9):
+            markers.append((target[[1, 2]], "Target", "x", "white"))
+        if math.isclose(float(actual[0]), fixed_x, abs_tol=1e-9):
+            markers.append((actual[[1, 2]], "Measured peak", "+", "black"))
+    elif plane == "xy":
+        horizontal, vertical, power = _orthogonal_field_arrays(
+            field_data, user_index, plane
+        )
+        horizontal_label, vertical_label = "X / mm", "Y / mm"
+        center = actual[[0, 1]]
+        fixed_z = float(field_data["xy_plane_z_mm_by_user"][user_index])
+        markers = [(actual[[0, 1]], "Measured peak", "+", "black")]
+        if math.isclose(float(target[2]), fixed_z, abs_tol=1e-9):
+            markers.insert(0, (target[[0, 1]], "Target", "x", "white"))
+    else:
+        raise ValueError("plane must be 'xz', 'yz', or 'xy'")
+
+    if local_radius_mm is not None:
+        radius = float(local_radius_mm)
+        horizontal_mask = _local_axis_mask(horizontal, center[0], radius)
+        vertical_mask = _local_axis_mask(vertical, center[1], radius)
+        if np.any(horizontal_mask) and np.any(vertical_mask):
+            horizontal = horizontal[horizontal_mask]
+            vertical = vertical[vertical_mask]
+            power = power[np.ix_(vertical_mask, horizontal_mask)]
+
+    raw_db = 10.0 * np.log10(np.maximum(power, np.finfo(float).tiny))
+    db = np.maximum(raw_db, -float(dynamic_range_db))
+    figure = Figure(figsize=(7.2, 5.2), dpi=130, constrained_layout=True)
     axis = figure.subplots()
     image = axis.imshow(
-        db, origin="lower", aspect="auto",
-        extent=[float(x[0]), float(x[-1]), float(z[0]), float(z[-1])],
-        cmap="turbo", vmin=-30, vmax=0,
+        db,
+        origin="lower",
+        aspect="equal",
+        extent=[
+            float(horizontal[0]), float(horizontal[-1]),
+            float(vertical[0]), float(vertical[-1]),
+        ],
+        cmap="turbo",
+        interpolation="bilinear",
+        vmin=-float(dynamic_range_db),
+        vmax=0,
     )
-    axis.scatter([target[0]], [target[2]], marker="x", color="white", s=60, label="Target")
-    axis.scatter([actual[0]], [actual[2]], marker="+", color="black", s=70, label="Peak")
-    axis.set(xlabel="X / mm", ylabel="Z / mm", title=f"User {user_index + 1} normalized field")
-    axis.legend(loc="upper right")
+    if (
+        raw_db.shape[0] >= 2
+        and raw_db.shape[1] >= 2
+        and float(np.nanmin(raw_db)) <= -3 <= float(np.nanmax(raw_db))
+    ):
+        axis.contour(
+            horizontal,
+            vertical,
+            raw_db,
+            levels=[-3],
+            colors="white",
+            linewidths=0.9,
+            linestyles="solid",
+        )
+    horizontal_limits = (float(horizontal[0]), float(horizontal[-1]))
+    vertical_limits = (float(vertical[0]), float(vertical[-1]))
+    for point, label, marker, color in markers:
+        if (
+            horizontal_limits[0] <= point[0] <= horizontal_limits[1]
+            and vertical_limits[0] <= point[1] <= vertical_limits[1]
+        ):
+            axis.scatter(
+                [point[0]], [point[1]], marker=marker, color=color,
+                s=70, linewidths=1.5, label=label,
+            )
+    axis.set(
+        xlabel=horizontal_label,
+        ylabel=vertical_label,
+        title=f"User {user_index + 1} · {plane.upper()} normalized power",
+    )
+    if markers:
+        axis.legend(loc="upper right")
     figure.colorbar(image, ax=axis, label="Relative power / dB")
     buffer = io.BytesIO()
     FigureCanvasAgg(figure).print_png(buffer)
     return buffer.getvalue()
+
+
+def _local_axis_mask(
+    coordinates: np.ndarray, center: float, radius: float
+) -> np.ndarray:
+    mask = np.abs(coordinates - center) <= radius
+    required = min(2, len(coordinates))
+    if int(np.count_nonzero(mask)) < required:
+        nearest = np.argsort(np.abs(coordinates - center))[:required]
+        mask[nearest] = True
+    return mask
+
+
+def field_png(field_data: dict[str, Any], user_index: int) -> bytes:
+    """Backward-compatible exported XOZ image."""
+
+    return plane_png(
+        field_data, user_index, "xz", dynamic_range_db=30.0
+    )
+
+
+def load_plane_png(
+    project_root: Path,
+    simulation: dict[str, Any],
+    user_index: int,
+    plane: str,
+    *,
+    local_radius_mm: float | None = None,
+    dynamic_range_db: float = 12.0,
+) -> bytes:
+    """Load and cache a rendered field plane by immutable artifact identity."""
+
+    path = artifact_paths(project_root, simulation).get("field_json")
+    if path is None:
+        raise ValueError("该迭代没有可读取的场数据。")
+    stat = path.stat()
+    rendered = _load_plane_png_cached(
+        str(path), stat.st_mtime_ns, stat.st_size, int(user_index), plane,
+        None if local_radius_mm is None else float(local_radius_mm),
+        float(dynamic_range_db),
+    )
+    if rendered is None:
+        raise ValueError("场数据无效，无法生成热力图。")
+    return rendered
+
+
+@lru_cache(maxsize=128)
+def _load_plane_png_cached(
+    path_text: str,
+    modified_ns: int,
+    size_bytes: int,
+    user_index: int,
+    plane: str,
+    local_radius_mm: float | None,
+    dynamic_range_db: float,
+) -> bytes | None:
+    field_data = _load_field_json_cached(path_text, modified_ns, size_bytes)
+    if field_data is None:
+        return None
+    return plane_png(
+        field_data,
+        user_index,
+        plane,
+        local_radius_mm=local_radius_mm,
+        dynamic_range_db=dynamic_range_db,
+    )
 
 
 def report_markdown(
@@ -167,6 +371,12 @@ def report_markdown(
         f"- 峰旁比 / dB：{simulation.get('peak_to_sidelobe_ratio_db_by_user')}",
         "- 峰旁比定义：目标局部峰功率除以 FWHM×DOF 主瓣矩形之外的最大功率；负值表示外部存在更强峰。",
         f"- 峰值功率（模型单位）：{simulation.get('peak_power_by_user')}",
+        (
+            "- 场切面：XOZ 主评估面为 201×201；YOZ 主切面固定在 X=0，"
+            "XOY 面固定在实际峰值 Z，额外切面均为 101×101。"
+            if simulation.get("orthogonal_plane_resolution")
+            else "- 场切面：该历史结果仅记录 XOZ 主评估面。"
+        ),
         "",
         "## 方法边界",
         "",
@@ -175,7 +385,6 @@ def report_markdown(
     if isinstance(governance, dict):
         llm = governance.get("llm") or {}
         versions = governance.get("versions") or {}
-        git = governance.get("git") or {}
         matlab = governance.get("matlab") or {}
         external = governance.get("external_data") or {}
         lines.extend([
@@ -185,7 +394,6 @@ def report_markdown(
             f"- 模型 ID：{llm.get('model') or '提供方未返回'}",
             f"- 模型 revision：{llm.get('model_revision') or '提供方未返回'}",
             f"- Prompt / Tool schema 版本：{versions.get('prompt_contract_version')} / {versions.get('tool_schema_version')}",
-            f"- Git commit：{git.get('commit') or '未记录'}；dirty={git.get('dirty')}",
             f"- MATLAB：{matlab.get('version') or '未记录'} ({matlab.get('release') or '未知 release'})",
             f"- Token（input/output/cache-read/cache-write/reasoning）：{llm.get('input_tokens')} / {llm.get('output_tokens')} / {llm.get('cache_read_tokens')} / {llm.get('cache_write_tokens')} / {llm.get('reasoning_tokens')}",
             f"- 费用：actual={llm.get('actual_cost_usd')} USD；estimated={llm.get('estimated_cost_usd')} USD；status={llm.get('cost_status')}",
@@ -209,9 +417,17 @@ def export_bundle(
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("report.md", report_markdown(state, simulation, governance))
         if isinstance(governance, dict):
+            public_governance = {
+                key: value for key, value in governance.items() if key != "git"
+            }
             archive.writestr(
                 "governance.json",
-                json.dumps(governance, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+                json.dumps(
+                    public_governance,
+                    ensure_ascii=False,
+                    indent=2,
+                    allow_nan=False,
+                ) + "\n",
             )
         for name, path in paths.items():
             archive.write(path, arcname=path.name)
@@ -223,6 +439,14 @@ def export_bundle(
             archive.writestr(
                 f"user_{user_index + 1}_field.png", field_png(field_data, user_index)
             )
+            if _has_orthogonal_planes(field_data):
+                for plane in ("yz", "xy"):
+                    archive.writestr(
+                        f"user_{user_index + 1}_{plane}_field.csv",
+                        orthogonal_field_frame(field_data, user_index, plane)
+                        .to_csv(index=False)
+                        .encode("utf-8-sig"),
+                    )
     return output.getvalue()
 
 
@@ -238,6 +462,42 @@ def _field_arrays(field_data: dict[str, Any], user_index: int) -> tuple[np.ndarr
     if power.shape != (len(z), len(x)):
         raise ValueError("场矩阵与坐标轴尺寸不一致。")
     return x, z, power
+
+
+def _orthogonal_field_arrays(
+    field_data: dict[str, Any], user_index: int, plane: str
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if plane == "yz":
+        horizontal = np.asarray(field_data["y_mm"], dtype=float).reshape(-1)
+        vertical = np.asarray(field_data["yz_z_mm"], dtype=float).reshape(-1)
+        values = np.asarray(field_data["normalized_power_yz_by_user"], dtype=float)
+    elif plane == "xy":
+        horizontal = np.asarray(field_data["xy_x_mm"], dtype=float).reshape(-1)
+        vertical = np.asarray(field_data["xy_y_mm"], dtype=float).reshape(-1)
+        values = np.asarray(field_data["normalized_power_xy_by_user"], dtype=float)
+    else:
+        raise ValueError("plane must be 'yz' or 'xy'")
+    if values.ndim == 2:
+        values = values[:, :, np.newaxis]
+    if values.ndim != 3 or not 0 <= user_index < values.shape[2]:
+        raise ValueError("正交场矩阵的用户维度无效。")
+    power = values[:, :, user_index]
+    if power.shape != (len(vertical), len(horizontal)):
+        raise ValueError("正交场矩阵与坐标轴尺寸不一致。")
+    return horizontal, vertical, power
+
+
+def _has_orthogonal_planes(value: dict[str, Any]) -> bool:
+    return {
+        "y_mm",
+        "yz_z_mm",
+        "yz_plane_x_mm_by_user",
+        "normalized_power_yz_by_user",
+        "xy_x_mm",
+        "xy_y_mm",
+        "xy_plane_z_mm_by_user",
+        "normalized_power_xy_by_user",
+    }.issubset(value)
 
 
 def _valid_field_data(value: Any) -> bool:
@@ -264,6 +524,20 @@ def _valid_field_data(value: Any) -> bool:
         value["user_count"] = user_count
         for index in range(user_count):
             _field_arrays(value, index)
+        if int(value.get("schema_version", 1)) >= 2:
+            if not _has_orthogonal_planes(value):
+                return False
+            for key in ("yz_plane_x_mm_by_user", "xy_plane_z_mm_by_user"):
+                if not isinstance(value.get(key), list):
+                    value[key] = [value.get(key)]
+                if len(value[key]) != user_count or not all(
+                    isinstance(item, (int, float)) and math.isfinite(float(item))
+                    for item in value[key]
+                ):
+                    return False
+            for index in range(user_count):
+                _orthogonal_field_arrays(value, index, "yz")
+                _orthogonal_field_arrays(value, index, "xy")
     except (TypeError, ValueError, IndexError):
         return False
     return True

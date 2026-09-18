@@ -151,6 +151,14 @@ def _run_one(job: dict[str, Any]) -> None:
                 job.get("submission_governance")
                 if isinstance(job.get("submission_governance"), dict) else None
             ),
+            model=(
+                job.get("model_override")
+                if isinstance(job.get("model_override"), str) else None
+            ),
+            provider=(
+                job.get("provider_override")
+                if isinstance(job.get("provider_override"), str) else None
+            ),
         )
 
         def completed(current: dict[str, Any]) -> None:

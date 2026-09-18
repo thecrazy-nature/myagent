@@ -47,7 +47,12 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(requested["control"], "pause")
 
     def test_failed_job_creates_resume_checkpoint_request(self) -> None:
-        job = create_job("original", conversation_id="conversation_one")
+        job = create_job(
+            "original",
+            conversation_id="conversation_one",
+            model_override="deepseek-v4-flash",
+            provider_override="deepseek",
+        )
         from app.job_store import mutate_job
         mutate_job(job["job_id"], lambda value: value.update(
             status="failed", hermes_session_id="session_1"
@@ -56,9 +61,17 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(recovery["resume_session_id"], "session_1")
         self.assertEqual(recovery["recovery_of"], job["job_id"])
         self.assertIn("get_focus_task_state", recovery["task_text"])
+        self.assertIn("remaining_refinements", recovery["task_text"])
+        self.assertEqual(recovery["model_override"], "deepseek-v4-flash")
+        self.assertEqual(recovery["provider_override"], "deepseek")
 
     def test_completed_job_can_repeat_in_a_fresh_conversation(self) -> None:
-        job = create_job("same scientific request", conversation_id="conversation_one")
+        job = create_job(
+            "same scientific request",
+            conversation_id="conversation_one",
+            model_override="deepseek-v4-flash",
+            provider_override="deepseek",
+        )
         from app.job_store import mutate_job
         mutate_job(job["job_id"], lambda value: value.update(
             status="completed", result={"task_kind": "focus", "status": "SUCCESS"}
@@ -69,6 +82,11 @@ class JobStoreTests(unittest.TestCase):
         self.assertTrue(repeated["conversation_id"].startswith("repeat_"))
         self.assertIsNone(repeated["resume_session_id"])
         self.assertIn("source_hashes", repeated["submission_governance"])
+        self.assertEqual(repeated["model_override"], "deepseek-v4-flash")
+        self.assertEqual(
+            repeated["submission_governance"]["llm_request"]["provider_override"],
+            "deepseek",
+        )
 
 
 if __name__ == "__main__":

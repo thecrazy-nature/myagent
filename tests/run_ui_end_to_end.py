@@ -19,7 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.agent_runner import _export_session, check_proxy, locate_hermes_python
+from app.agent_runner import _export_session, locate_hermes_python
 from app.view_models import build_task_view
 
 
@@ -35,9 +35,6 @@ def main() -> int:
         raise RuntimeError(
             f"Refusing to repeat the one-shot UI E2E test; evidence already exists: {EVIDENCE_PATH}"
         )
-    proxy = check_proxy()
-    if not proxy.available:
-        raise RuntimeError(proxy.message)
     edge = _edge_path()
     hermes_python = locate_hermes_python()
     started_epoch = time.time()

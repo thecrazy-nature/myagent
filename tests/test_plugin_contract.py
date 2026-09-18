@@ -56,16 +56,32 @@ class PluginContractTests(unittest.TestCase):
         self.assertIn("candidate_budget", search["required"])
         self.assertIn("seed", search["required"])
 
-    def test_all_ten_tools_register_without_removing_focus_tools(self) -> None:
+    def test_metasurface_tools_expose_binary_transmission_and_bounded_search(self) -> None:
+        create = self.plugin.CREATE_METASURFACE_DESIGN_TASK_SCHEMA["parameters"]
+        optimize = self.plugin.OPTIMIZE_METASURFACE_CANDIDATE_SCHEMA["parameters"]
+        self.assertEqual(
+            create["properties"]["incident_wave"]["enum"],
+            ["plane_wave", "horn_spherical_wave"],
+        )
+        self.assertEqual(create["properties"]["array_size"]["maxItems"], 2)
+        self.assertIn("binary_states", create["required"])
+        self.assertEqual(optimize["properties"]["optimizer"]["enum"], ["binary_coordinate_descent_v1"])
+        self.assertEqual(optimize["properties"]["max_iterations"]["maximum"], 8)
+        self.assertEqual(optimize["properties"]["guard_weight"]["maximum"], 2)
+
+    def test_all_sixteen_tools_register_without_removing_existing_tools(self) -> None:
         registrations = []
         class Context:
             def register_tool(self, **kwargs):
                 registrations.append(kwargs["name"])
         self.plugin.register(Context())
-        self.assertEqual(len(registrations), 10)
+        self.assertEqual(len(registrations), 16)
         self.assertTrue({
             "create_focus_task", "get_focus_task_state", "refine_focus",
             "create_array_design_task", "save_array_design",
+            "create_metasurface_design_task", "evaluate_metasurface_baseline",
+            "optimize_metasurface_candidate", "evaluate_metasurface_design",
+            "save_metasurface_design", "build_metasurface_cst_model",
         }.issubset(registrations))
 
 

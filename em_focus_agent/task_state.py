@@ -363,6 +363,9 @@ def run_task_simulation(agent_task_id: str) -> dict[str, Any]:
         "harmonic_frequencies_hz": matlab_harmonic_frequencies,
         "user_harmonic_orders": matlab_user_orders,
         "user_harmonic_indices": matlab_user_indices,
+        "orthogonal_plane_resolution": matlab_result.get(
+            "orthogonal_plane_resolution"
+        ),
         "method": matlab_result.get("method"),
         "hardware_realization": matlab_result.get("hardware_realization"),
         "artifacts": matlab_result.get("artifacts"),

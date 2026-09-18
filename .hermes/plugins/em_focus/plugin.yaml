@@ -4,6 +4,7 @@ description: Project-local tools for LLM-driven MATLAB focusing and constrained 
 kind: standalone
 provides_tools:
   - em_focus_ping
+  - get_focus_task_state
   - create_focus_task
   - run_focus_simulation
   - evaluate_focus
@@ -12,3 +13,9 @@ provides_tools:
   - evaluate_array_geometry
   - search_array_geometry
   - save_array_design
+  - create_metasurface_design_task
+  - evaluate_metasurface_baseline
+  - optimize_metasurface_candidate
+  - evaluate_metasurface_design
+  - save_metasurface_design
+  - build_metasurface_cst_model

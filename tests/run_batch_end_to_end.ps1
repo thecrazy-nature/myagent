@@ -1,6 +1,6 @@
 param(
     [string]$MatlabExecutable = 'matlab',
-    [string]$ProjectRoot = 'F:\hermes-em-agent'
+    [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)
 )
 
 $ErrorActionPreference = 'Stop'

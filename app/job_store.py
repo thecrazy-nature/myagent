@@ -37,14 +37,23 @@ def create_job(
     resume_session_id: str | None = None,
     recovery_of: str | None = None,
     repeat_of: str | None = None,
+    model_override: str | None = None,
+    provider_override: str | None = None,
 ) -> dict[str, Any]:
     if not isinstance(task_text, str) or not task_text.strip():
         raise JobStoreError("任务文本不能为空。")
     if not isinstance(conversation_id, str) or not conversation_id.strip():
         raise JobStoreError("conversation_id 不能为空。")
+    model_override = _optional_override(model_override, "model_override")
+    provider_override = _optional_override(provider_override, "provider_override")
     now = _utc_now()
+    submission_governance = build_submission_snapshot(PROJECT_ROOT)
+    submission_governance["llm_request"] = {
+        "model_override": model_override,
+        "provider_override": provider_override,
+    }
     job = {
-        "schema_version": 2,
+        "schema_version": 3,
         "job_id": f"job_{uuid.uuid4().hex}",
         "conversation_id": conversation_id,
         "task_text": task_text,
@@ -52,7 +61,9 @@ def create_job(
         "resume_session_id": resume_session_id,
         "recovery_of": recovery_of,
         "repeat_of": repeat_of,
-        "submission_governance": build_submission_snapshot(PROJECT_ROOT),
+        "model_override": model_override,
+        "provider_override": provider_override,
+        "submission_governance": submission_governance,
         "reproducibility_comparison": None,
         "status": "queued",
         "stage": "queued",
@@ -190,6 +201,8 @@ def create_recovery_job(job_id: str) -> dict[str, Any]:
             conversation_id=str(source.get("conversation_id")),
             submission_mode="retry",
             recovery_of=job_id,
+            model_override=source.get("model_override"),
+            provider_override=source.get("provider_override"),
         )
     checkpoint_instruction = (
         f"待恢复的 agent_task_id 是 {agent_task_id!r}。"
@@ -200,7 +213,8 @@ def create_recovery_job(job_id: str) -> dict[str, Any]:
         "请从上次中断后最后一个已持久化的有效状态继续，不要重复已经成功完成的 MATLAB 实验。"
         + "先调用 get_focus_task_state 检查任务状态，再根据状态选择 run、evaluate、refine 或停止；"
         + checkpoint_instruction
-        + "若没有可恢复的聚焦任务状态，则如实说明。\n\n原始请求：\n"
+        + "若状态为 evaluation_failed 且 remaining_refinements 大于 0，必须直接执行 refine、run、evaluate，"
+        + "无需再次向用户确认；若没有可恢复的聚焦任务状态，则如实说明。\n\n原始请求：\n"
         + str(source.get("task_text", ""))
     )
     return create_job(
@@ -209,6 +223,8 @@ def create_recovery_job(job_id: str) -> dict[str, Any]:
         submission_mode="recovery",
         resume_session_id=session_id if isinstance(session_id, str) else None,
         recovery_of=job_id,
+        model_override=source.get("model_override"),
+        provider_override=source.get("provider_override"),
     )
 
 
@@ -223,6 +239,8 @@ def create_repeat_job(job_id: str) -> dict[str, Any]:
         conversation_id=f"repeat_{uuid.uuid4().hex}",
         submission_mode="reproducibility_repeat",
         repeat_of=job_id,
+        model_override=source.get("model_override"),
+        provider_override=source.get("provider_override"),
     )
 
 
@@ -262,6 +280,17 @@ def latest_conversation_session(conversation_id: str, before_job_id: str) -> str
 
 def mark_notification_seen(job_id: str) -> dict[str, Any]:
     return mutate_job(job_id, lambda job: job.update(notification_pending=False))
+
+
+def _optional_override(value: Any, name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise JobStoreError(f"{name} 必须是字符串。")
+    cleaned = value.strip()
+    if not cleaned or len(cleaned) > 200 or any(ord(character) < 32 for character in cleaned):
+        raise JobStoreError(f"{name} 无效。")
+    return cleaned
 
 
 def _estimated_total_seconds() -> float:

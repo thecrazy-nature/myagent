@@ -4,9 +4,11 @@ function result = run_focus_core(targets_mm, options)
 % Each target row is assigned to a distinct modulation harmonic. Harmonic
 % weights are synthesized independently, so this is an ideal multi-harmonic
 % complex-excitation model rather than a rectangular-pulse TMA realization.
-% The solver evaluates the x-z plane, so every y must be zero. Polarization
-% is persisted as scenario metadata; this scalar point-source model does not
-% calculate polarization-dependent fields.
+% Focus localization and metrics use the x-z plane, so every target y must
+% be zero. Additional y-z and x-y cuts through the measured focal point are
+% evaluated for visualization. Polarization is persisted as scenario
+% metadata; this scalar point-source model does not calculate
+% polarization-dependent fields.
 
 initialize_core_paths();
 if nargin < 2
@@ -131,6 +133,10 @@ for user_index = 1:size(targets_mm, 1)
         spot.depth_3db_lambda{harmonic_index}(1));
 end
 
+orthogonal_planes = compute_orthogonal_plane_maps( ...
+    harmonic_weights, model, maps, user_harmonic_indices, ...
+    actual_peak_points_mm, lambda_mm, 101);
+
 [global_peak_power, global_linear] = max( ...
     maps.raw_power_absolute, [], 'all', 'linear');
 [global_iz, global_ix, global_iq] = ...
@@ -185,6 +191,72 @@ result.target_bounds_mm = struct('x', x_bounds_mm, 'y', [0, 0], ...
 result.excitation = struct('harmonic_weights', harmonic_weights, ...
     'normalization', "maximum element magnitude equals one");
 result.maps = maps;
+result.orthogonal_planes = orthogonal_planes;
+end
+
+function planes = compute_orthogonal_plane_maps( ...
+    harmonic_weights, model, maps, user_harmonic_indices, ...
+    actual_peak_points_mm, lambda_mm, resolution)
+%COMPUTE_ORTHOGONAL_PLANE_MAPS Evaluate true YOZ and focal-depth XOY cuts.
+
+x_lambda = linspace(maps.x_lambda(1), maps.x_lambda(end), resolution);
+y_lambda = x_lambda;
+z_lambda = linspace(maps.z_lambda(1), maps.z_lambda(end), resolution);
+user_count = numel(user_harmonic_indices);
+yz_power = zeros(numel(z_lambda), numel(y_lambda), user_count);
+xy_power = zeros(numel(y_lambda), numel(x_lambda), user_count);
+fixed_x_mm = zeros(user_count, 1);
+fixed_z_mm = actual_peak_points_mm(:, 3);
+
+[y_grid, z_grid] = meshgrid(y_lambda, z_lambda);
+[x_grid, xy_y_grid] = meshgrid(x_lambda, y_lambda);
+for user_index = 1:user_count
+    harmonic_index = user_harmonic_indices(user_index);
+    fixed_x_lambda = fixed_x_mm(user_index)/lambda_mm;
+    yz_points_m = [ ...
+        fixed_x_lambda*ones(numel(y_grid), 1), ...
+        y_grid(:), z_grid(:)]*model.lambda;
+    yz_field = compute_one_harmonic_field( ...
+        harmonic_weights, model, harmonic_index, yz_points_m);
+    raw_yz = reshape(abs(yz_field).^2, size(y_grid));
+    yz_power(:, :, user_index) = raw_yz/max(max(raw_yz, [], 'all'), eps);
+
+    fixed_z_lambda = fixed_z_mm(user_index)/lambda_mm;
+    xy_points_m = [ ...
+        x_grid(:), xy_y_grid(:), ...
+        fixed_z_lambda*ones(numel(x_grid), 1)]*model.lambda;
+    xy_field = compute_one_harmonic_field( ...
+        harmonic_weights, model, harmonic_index, xy_points_m);
+    raw_xy = reshape(abs(xy_field).^2, size(x_grid));
+    xy_power(:, :, user_index) = raw_xy/max(max(raw_xy, [], 'all'), eps);
+end
+
+planes = struct( ...
+    'resolution', resolution, ...
+    'normalization', "each user and plane maximum equals one", ...
+    'y_lambda', y_lambda, ...
+    'yz_z_lambda', z_lambda, ...
+    'yz_fixed_x_mm_by_user', fixed_x_mm, ...
+    'yz_normalized_power_by_user', yz_power, ...
+    'xy_x_lambda', x_lambda, ...
+    'xy_y_lambda', y_lambda, ...
+    'xy_fixed_z_mm_by_user', fixed_z_mm, ...
+    'xy_normalized_power_by_user', xy_power);
+end
+
+function field = compute_one_harmonic_field( ...
+    harmonic_weights, model, harmonic_index, points_m)
+%COMPUTE_ONE_HARMONIC_FIELD Avoid evaluating inactive harmonics on extra cuts.
+
+chunk_size = 4096;
+field = complex(zeros(size(points_m, 1), 1));
+for first = 1:chunk_size:size(points_m, 1)
+    last = min(first+chunk_size-1, size(points_m, 1));
+    operators = build_harmonic_weight_operator( ...
+        points_m(first:last, :), model.array, ...
+        model.frequencies(harmonic_index), model.cfg.physics.c);
+    field(first:last) = operators{1}*harmonic_weights(:, harmonic_index);
+end
 end
 
 function orders = assign_user_harmonics(user_count)

@@ -3,32 +3,26 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = $PSScriptRoot
 Set-Location -LiteralPath $projectRoot
 
-$expectedProxy = 'http://127.0.0.1:7897'
-$expectedNoProxy = 'localhost,127.0.0.1,::1'
-if (
-    $env:HTTP_PROXY -ne $expectedProxy -or
-    $env:HTTPS_PROXY -ne $expectedProxy -or
-    $env:NO_PROXY -ne $expectedNoProxy
-) {
-    throw "Hermes network proxy is unavailable. Start Clash and run .\proxy-on.ps1 first."
-}
-
-$tcpClient = [System.Net.Sockets.TcpClient]::new()
-try {
-    $connection = $tcpClient.ConnectAsync('127.0.0.1', 7897)
-    if (-not $connection.Wait(2000) -or -not $tcpClient.Connected) {
-        throw 'Clash proxy 127.0.0.1:7897 is not accepting connections.'
+$settingsPath = Join-Path $projectRoot 'app-settings.local.json'
+$localSettings = $null
+if (Test-Path -LiteralPath $settingsPath -PathType Leaf) {
+    try {
+        $localSettings = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    catch {
+        throw "Invalid local application settings: $settingsPath. $($_.Exception.Message)"
     }
 }
-catch {
-    throw 'Hermes network proxy is unavailable. Start Clash and run .\proxy-on.ps1 first.'
-}
-finally {
-    $tcpClient.Dispose()
+
+if (-not $env:MATLAB_EXECUTABLE -and $localSettings.matlab_executable) {
+    $env:MATLAB_EXECUTABLE = [string]$localSettings.matlab_executable
 }
 
 $hermesPython = if ($env:HERMES_PYTHON) {
     $env:HERMES_PYTHON
+}
+elseif ($localSettings.hermes_python) {
+    [string]$localSettings.hermes_python
 }
 else {
     Join-Path $env:LOCALAPPDATA 'hermes\hermes-agent\venv\Scripts\python.exe'
