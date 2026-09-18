@@ -20,24 +20,39 @@ $stagingRoot = Join-Path $stagingParent $packageName
 New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
 
 try {
-    $payloadItems = @(
-        '.hermes', '.hermes.md', 'agent_interface', 'app', 'array_design', 'bridge',
-        'em_focus_agent', 'governance', 'matlab_core', 'metasurface_design',
-        'README.md', 'requirements-ui.txt', 'run-app.ps1', 'proxy-on.ps1', 'proxy-off.ps1'
+    $runtimeDirectories = @(
+        '.hermes', 'agent_interface', 'app', 'array_design', 'bridge',
+        'em_focus_agent', 'governance', 'matlab_core', 'metasurface_design'
     )
-    foreach ($item in $payloadItems) {
-        $source = Join-Path $repositoryRoot $item
-        if (-not (Test-Path -LiteralPath $source)) {
-            throw "Required release item is missing: $item"
-        }
-        Copy-Item -LiteralPath $source -Destination $stagingRoot -Recurse -Force
+    $runtimeRootFiles = @(
+        '.hermes.md', 'README.md', 'requirements-ui.txt', 'run-app.ps1',
+        'proxy-on.ps1', 'proxy-off.ps1'
+    )
+    $trackedFiles = @(git -C $repositoryRoot ls-files)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read the Git release manifest.' }
+    $releaseFiles = @($trackedFiles | Where-Object {
+        $path = $_.Replace('\', '/')
+        ($runtimeRootFiles -contains $path) -or
+        ($runtimeDirectories | Where-Object { $path.StartsWith($_ + '/', [StringComparison]::OrdinalIgnoreCase) })
+    })
+    if ($releaseFiles.Count -lt 25) {
+        throw "The Git release manifest contains too few runtime files: $($releaseFiles.Count)"
+    }
+    foreach ($relativePath in $releaseFiles) {
+        $source = Join-Path $repositoryRoot $relativePath
+        $destination = Join-Path $stagingRoot $relativePath
+        $destinationFolder = Split-Path -Parent $destination
+        New-Item -ItemType Directory -Path $destinationFolder -Force | Out-Null
+        Copy-Item -LiteralPath $source -Destination $destination -Force
     }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install.ps1') -Destination $stagingRoot
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'uninstall.ps1') -Destination $stagingRoot
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'setup.cmd') -Destination $stagingRoot
 
     Get-ChildItem -LiteralPath $stagingRoot -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force
-    Get-ChildItem -LiteralPath $stagingRoot -Recurse -File -Include '*.pyc', '*.pyo' | Remove-Item -Force
+    Get-ChildItem -LiteralPath $stagingRoot -Recurse -File |
+        Where-Object { $_.Extension -in @('.pyc', '.pyo') } |
+        Remove-Item -Force
 
     $forbiddenPatterns = @(
         'sk-[A-Za-z0-9_-]{16,}',
@@ -64,6 +79,27 @@ try {
     $archivePath = Join-Path $resolvedOutput "$packageName.zip"
     Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
     Compress-Archive -LiteralPath $stagingRoot -DestinationPath $archivePath -CompressionLevel Optimal
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
+    try {
+        $fileEntries = @($archive.Entries | Where-Object { $_.Name })
+        $requiredSuffixes = @(
+            '/setup.cmd', '/install.ps1', '/run-app.ps1',
+            '/app/streamlit_app.py', '/matlab_core/run_focus_core.m'
+        )
+        foreach ($suffix in $requiredSuffixes) {
+            $normalizedSuffix = $suffix.Replace('/', '\')
+            if (-not ($fileEntries.FullName | Where-Object { $_.EndsWith($normalizedSuffix, [StringComparison]::OrdinalIgnoreCase) })) {
+                throw "Release archive is missing required file: $suffix"
+            }
+        }
+        if ($fileEntries.Count -lt 25) {
+            throw "Release archive contains too few files: $($fileEntries.Count)"
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
     $hash = Get-FileHash -LiteralPath $archivePath -Algorithm SHA256
     "$($hash.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($archivePath))" |
         Set-Content -LiteralPath "$archivePath.sha256" -Encoding ASCII
